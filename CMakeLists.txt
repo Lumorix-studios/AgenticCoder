@@ -10,6 +10,8 @@ qt_add_executable(LLMAgent
     main.cpp
     mainwindow.h
     mainwindow.cpp
+    syntaxhighlither.h
+    syntaxhighligher.cpp
 
 
 
