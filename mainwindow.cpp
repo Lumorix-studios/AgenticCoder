@@ -160,7 +160,7 @@ MainWindow::MainWindow(QWidget *parent)
     aiDock->setWidget(chatWidget);
 
 
-    // VS Code style dock behavior
+    
     aiDock->setFeatures(
         QDockWidget::DockWidgetMovable |
         QDockWidget::DockWidgetFloatable
