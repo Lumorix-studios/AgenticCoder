@@ -7,7 +7,7 @@
     <x>0</x>
     <y>0</y>
     <width>808</width>
-    <height>598</height>
+    <height>580</height>
    </rect>
   </property>
   <property name="windowTitle">
@@ -53,14 +53,20 @@ li.checked::marker { content: &quot;\2612&quot;; }
       <height>501</height>
      </rect>
     </property>
+    <property name="maximumSize">
+     <size>
+      <width>251</width>
+      <height>16777215</height>
+     </size>
+    </property>
    </widget>
    <widget class="QScrollBar" name="horizontalScrollBar">
     <property name="geometry">
      <rect>
       <x>0</x>
-      <y>540</y>
+      <y>530</y>
       <width>551</width>
-      <height>16</height>
+      <height>21</height>
      </rect>
     </property>
     <property name="orientation">
@@ -73,7 +79,7 @@ li.checked::marker { content: &quot;\2612&quot;; }
       <x>530</x>
       <y>0</y>
       <width>20</width>
-      <height>541</height>
+      <height>531</height>
      </rect>
     </property>
     <property name="orientation">
