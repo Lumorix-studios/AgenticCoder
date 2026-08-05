@@ -11,6 +11,7 @@ qt_add_executable(LLMAgent
     mainwindow.cpp
     mainwindow.h
     mainwindow.ui
+    settingswindow.h settingswindow.cpp settingswindow.ui
 )
 
 qt_add_translations(

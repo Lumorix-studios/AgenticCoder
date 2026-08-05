@@ -1,5 +1,6 @@
 #include "mainwindow.h"
 #include "ui_mainwindow.h"
+#include "settingswindow.h"
 #include <QDebug>
 #include <QFileDialog>
 #include <QMessageBox>
@@ -17,13 +18,11 @@ MainWindow::MainWindow(QWidget *parent)
         ui->actionopen_settings,
         &QAction::triggered,
         this,
-        []()
+        [this]()
         {
-            QMessageBox::information(
-                nullptr,
-                "Settings",
-                "Settings opened"
-                );
+            settingswindow *settings = new settingswindow(this);
+            settings->show();
+
         }
         );
 }
