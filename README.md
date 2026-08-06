@@ -1,82 +1,75 @@
-<<<<<<< HEAD
-# React + TypeScript + Vite
+# AgenticCoder
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+A lightweight, desktop-first AI coding assistant built with **React**, **TypeScript**, and **Tauri**.
 
-Currently, two official plugins are available:
+![TypeScript](https://img.shields.io/badge/TypeScript-3178C6?style=for-the-badge\&logo=typescript\&logoColor=white)
+![React](https://img.shields.io/badge/React-20232A?style=for-the-badge\&logo=react\&logoColor=61DAFB)
+![Tauri](https://img.shields.io/badge/Tauri-24C8D8?style=for-the-badge\&logo=tauri\&logoColor=white)
+<img src="https://img.shields.io/badge/Rust-000000?style=for-the-badge&logo=rust&logoColor=white">
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+> **Status:** 🚧 Early Development
+> This project is actively being built and is not yet feature complete.
 
-## React Compiler
+## About
 
-The React Compiler is enabled on this template. See [this documentation](https://react.dev/learn/react-compiler) for more information.
+AgenticCoder is an AI-powered desktop coding environment focused on providing a fast, native experience. It aims to combine project navigation, code editing, and AI assistance into a single lightweight application.
 
-Note: This will impact Vite dev & build performances.
+## Current Features
 
-## Expanding the ESLint configuration
+* Modern desktop UI built with React + Tauri
+* Native folder selection
+* Native file selection
+* File explorer
+* Editor view
+* Responsive layout
+* Cross-platform architecture
 
-If you are developing a production application, we recommend updating the configuration to enable type-aware lint rules:
+## Planned Features
 
-```js
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
+* AI chat assistant
+* Agentic coding workflow
+* Syntax highlighting
+* Multi-tab editor
+* File creation, deletion, and renaming
+* Save & Save As
+* Project-wide search
+* Terminal integration
+* Git integration
+* Themes
+* Settings
+* Plugin system
 
-      // Remove tseslint.configs.recommended and replace with this
-      tseslint.configs.recommendedTypeChecked,
-      // Alternatively, use this for stricter rules
-      tseslint.configs.strictTypeChecked,
-      // Optionally, add this for stylistic rules
-      tseslint.configs.stylisticTypeChecked,
+## Tech Stack
 
-      // Other configs...
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
+* React
+* TypeScript
+* Tauri
+* Rust
+* Vite
+* Tailwind CSS
 
+## Development
+
+Clone the repository:
+
+```bash
+git clone https://github.com/Lumorix-studios/AgenticCoder.git
 ```
 
-You can also install [eslint-plugin-react-x](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-x) and [eslint-plugin-react-dom](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-dom) for React-specific lint rules:
+Install dependencies:
 
-```js
-// eslint.config.js
-import reactX from 'eslint-plugin-react-x'
-import reactDom from 'eslint-plugin-react-dom'
-
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-      // Enable lint rules for React
-      reactX.configs['recommended-typescript'],
-      // Enable lint rules for React DOM
-      reactDom.configs.recommended,
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
-
+```bash
+npm install
 ```
-=======
-BASICALLY VERY EARLY AND STILL IN DEVELOPMENT
-JUST STARTED today on 8/4/26 
->>>>>>> 6b0377ee51276360ed2d1bfe5c9b3f6b8fa17a79
+
+Start the development server:
+
+```bash
+npm run tauri dev
+```
+
+## Project Status
+
+This project was started in **August 2026** and is under active development. Features, APIs, and the interface may change frequently as development progresses.
+
+Feedback, bug reports, and suggestions are welcome.
