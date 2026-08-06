@@ -5,7 +5,7 @@ A lightweight, desktop-first AI coding assistant built with **React**, **TypeScr
 ![TypeScript](https://img.shields.io/badge/TypeScript-3178C6?style=for-the-badge\&logo=typescript\&logoColor=white)
 ![React](https://img.shields.io/badge/React-20232A?style=for-the-badge\&logo=react\&logoColor=61DAFB)
 ![Tauri](https://img.shields.io/badge/Tauri-24C8D8?style=for-the-badge\&logo=tauri\&logoColor=white)
-![Rust](https://shields.io)
+![Rust](https://img.shields.io)
 
 > **Status:** 🚧 Early Development
 > This project is actively being built and is not yet feature complete.
