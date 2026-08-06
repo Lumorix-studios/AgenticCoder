@@ -1,5 +1,6 @@
 use serde::{Deserialize, Serialize};
 use std::path::Path;
+use tauri::Manager;
 
 // ── File tree types ──────────────────────────────────────────────────────────
 
@@ -89,19 +90,32 @@ fn read_file(path: String) -> String {
     }
 }
 
-/// Write text content to a file (create or overwrite)
+/// Write text content to a file (create or overwrite).
+/// Creates missing parent directories so the AI can write to new nested paths.
 #[tauri::command]
 fn save_file(path: String, content: String) -> Result<(), String> {
-    std::fs::write(&path, content).map_err(|e| e.to_string())
+    let p = Path::new(&path);
+    if let Some(parent) = p.parent() {
+        if !parent.as_os_str().is_empty() {
+            std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+        }
+    }
+    std::fs::write(p, content).map_err(|e| e.to_string())
 }
 
-/// Create a new empty file
+/// Create a new empty file (also creates missing parent directories)
 #[tauri::command]
 fn create_file(path: String) -> Result<(), String> {
-    if Path::new(&path).exists() {
+    let p = Path::new(&path);
+    if p.exists() {
         return Err(format!("File already exists: {path}"));
     }
-    std::fs::File::create(&path).map_err(|e| e.to_string())?;
+    if let Some(parent) = p.parent() {
+        if !parent.as_os_str().is_empty() {
+            std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+        }
+    }
+    std::fs::File::create(p).map_err(|e| e.to_string())?;
     Ok(())
 }
 
@@ -128,11 +142,53 @@ fn delete_path(path: String) -> Result<(), String> {
     }
 }
 
+// ── AI config storage (per-app-instance JSON file) ────────────────────────────
+//
+// The config is stored in the OS-specific per-app config directory
+// (e.g. %APPDATA%\<identifier>\ai-config.json on Windows). Because the path
+// is derived from the app identifier, two separate installs of the app with
+// different identifiers get their own isolated config file — no key leakage.
+
+const AI_CONFIG_FILE: &str = "ai-config.json";
+
+fn config_path(app: &tauri::AppHandle) -> Result<std::path::PathBuf, String> {
+    let dir = app
+        .path()
+        .app_config_dir()
+        .map_err(|e| format!("Failed to resolve config dir: {e}"))?;
+    std::fs::create_dir_all(&dir).map_err(|e| format!("Failed to create config dir: {e}"))?;
+    Ok(dir.join(AI_CONFIG_FILE))
+}
+
+/// Read the raw AI config JSON (returns "{}" if none exists yet).
+#[tauri::command]
+fn read_ai_config(app: tauri::AppHandle) -> Result<String, String> {
+    let path = config_path(&app)?;
+    match std::fs::read_to_string(&path) {
+        Ok(content) => Ok(content),
+        Err(_) => Ok("{}".to_string()),
+    }
+}
+
+/// Write the raw AI config JSON to the per-app config file.
+#[tauri::command]
+fn write_ai_config(app: tauri::AppHandle, content: String) -> Result<(), String> {
+    let path = config_path(&app)?;
+    std::fs::write(&path, content).map_err(|e| e.to_string())
+}
+
+/// Return the absolute path of the AI config file (for display in the UI).
+#[tauri::command]
+fn ai_config_path(app: tauri::AppHandle) -> Result<String, String> {
+    config_path(&app).map(|p| p.to_string_lossy().to_string())
+}
+
 // ── App entry point ───────────────────────────────────────────────────────────
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        .plugin(tauri_plugin_http::init())
         .plugin(tauri_plugin_dialog::init())
         .invoke_handler(tauri::generate_handler![
             read_folder,
@@ -143,6 +199,9 @@ pub fn run() {
             create_folder,
             rename_path,
             delete_path,
+            read_ai_config,
+            write_ai_config,
+            ai_config_path,
         ])
         .setup(|app| {
             if cfg!(debug_assertions) {

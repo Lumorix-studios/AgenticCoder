@@ -13,6 +13,7 @@ interface TopMenuProps {
   onNewFile: () => void;
   onNewFolder: () => void;
   onRefreshTree: () => void;
+  onOpenAISettings: () => void;
 }
 
 interface MenuDef {
@@ -25,6 +26,7 @@ export default function TopMenu({
   onFolderOpen, onFileOpen,
   onSaveActive, onSaveAsActive,
   onNewFile, onNewFolder, onRefreshTree,
+  onOpenAISettings,
 }: TopMenuProps) {
   const [openMenu, setOpenMenu] = useState<string | null>(null);
   const menuRef = useRef<HTMLDivElement>(null);
@@ -46,7 +48,6 @@ export default function TopMenu({
     onFileOpen({ path, content, name });
     setOpenMenu(null);
   }
-
   const menus: MenuDef[] = [
     {
       label: "File",
@@ -61,7 +62,13 @@ export default function TopMenu({
       ],
     },
     {
-      label: "View",
+      label: "Settings",
+      items: [
+        { label: "Agent config settings", action: onOpenAISettings },
+      ],
+    },
+    {
+      label: "Agent",
       items: [
         {
           label: "Toggle AI Chat",

@@ -7,6 +7,16 @@
   ],
   "permissions": [
     "core:default",
-    "dialog:default"
+    "dialog:default",
+    {
+      "identifier": "http:default",
+      "allow": [
+        { "url": "https://*" },
+        { "url": "http://*" },
+        { "url": "https://*:*" },
+        { "url": "http://*:*" },
+        { "url": "http://localhost:*" }
+      ]
+    }
   ]
 }

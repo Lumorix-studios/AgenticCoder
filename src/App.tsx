@@ -5,23 +5,16 @@ import TopMenu from "../components/TopMenu";
 import FileExplorer from "../components/FileExplorer.tsx";
 import Editor from "../components/Editor.tsx";
 import ChatSidebar from "../components/ChatSidebar.tsx";
+import SplitText from "../components/SplitText.tsx";
+
 import StatusBar from "../components/StatusBar.tsx";
-import type { TabFile, FileEntry, AISettings } from "./types";
+import type { TabFile, FileEntry, AISettings, AIEdit } from "./types";
+import { loadAISettings, saveAISettings, resolveEditPath } from "./ai";
 import "./editor.css";
 
-const DEFAULT_AI_SETTINGS: AISettings = {
-  apiUrl: "https://api.openai.com/v1",
-  apiKey: "",
-  model: "gpt-4o-mini",
+const handleAnimationComplete = () => {
+  console.log('All letters have animated!');
 };
-
-function loadAISettings(): AISettings {
-  try {
-    const raw = localStorage.getItem("tauri-editor-ai");
-    if (raw) return { ...DEFAULT_AI_SETTINGS, ...JSON.parse(raw) };
-  } catch { /* ignore */ }
-  return DEFAULT_AI_SETTINGS;
-}
 
 export default function App() {
   const [tabs, setTabs] = useState<TabFile[]>([]);
@@ -29,26 +22,62 @@ export default function App() {
   const [fileTree, setFileTree] = useState<FileEntry[]>([]);
   const [folderPath, setFolderPath] = useState("");
   const [chatOpen, setChatOpen] = useState(false);
-  const [aiSettings, setAISettings] = useState<AISettings>(loadAISettings);
+  const [aiSettings, setAISettings] = useState<AISettings>({
+    provider: "openai",
+    apiUrl: "https://api.openai.com/v1",
+    apiKey: "",
+    model: "",
+    authMode: "bearer",
+    customHeaders: "",
+    anthropic: false,
+    extraBody: "",
+  });
+  const [aiSettingsLoaded, setAiSettingsLoaded] = useState(false);
+  const [forceAISettings, setForceAISettings] = useState(false);
   const [cursorLine, setCursorLine] = useState(1);
+  const [aiEdits, setAiEdits] = useState<AIEdit[]>([]);
+  const [aiEditingPaths, setAiEditingPaths] = useState<Set<string>>(new Set());
   const activeTabRef = useRef<TabFile | null>(null);
+  const tabsRef = useRef<TabFile[]>([]);
+  const folderPathRef = useRef(folderPath);
 
   const activeTab = tabs.find((t) => t.path === activeTabPath) ?? null;
 
-  // Keep ref in sync with active tab (outside render)
+  // Keep refs in sync (outside render)
   useEffect(() => {
     activeTabRef.current = activeTab;
   }, [activeTab]);
 
-  // Persist AI settings
   useEffect(() => {
-    localStorage.setItem("tauri-editor-ai", JSON.stringify(aiSettings));
-  }, [aiSettings]);
+    tabsRef.current = tabs;
+  }, [tabs]);
 
-  // ── File operations ──────────────────────────────────────────────────────
+  useEffect(() => {
+    folderPathRef.current = folderPath;
+  }, [folderPath]);
+
+  // Load AI settings from the per-app JSON config file once on startup
+  useEffect(() => {
+    let cancelled = false;
+    loadAISettings().then((s) => {
+      if (!cancelled) {
+        setAISettings(s);
+        setAiSettingsLoaded(true);
+      }
+    });
+    return () => { cancelled = true; };
+  }, []);
+
+  // Persist AI settings to the per-app JSON config file
+  useEffect(() => {
+    if (!aiSettingsLoaded) return;
+    saveAISettings(aiSettings);
+  }, [aiSettings, aiSettingsLoaded]);
+
+  // ── File operations 
   const openTab = useCallback(async (path: string, contentOverride?: string) => {
     // Already open — just activate
-    if (tabs.some((t) => t.path === path)) {
+    if (tabsRef.current.some((t) => t.path === path)) {
       setActiveTabPath(path);
       return;
     }
@@ -56,18 +85,21 @@ export default function App() {
     const name = path.replace(/\\/g, "/").split("/").pop() ?? path;
     setTabs((prev) => [...prev, { path, name, content, originalContent: content }]);
     setActiveTabPath(path);
-  }, [tabs]);
+  }, []);
 
   const closeTab = useCallback((path: string) => {
     setTabs((prev) => {
       const idx = prev.findIndex((t) => t.path === path);
       const newTabs = prev.filter((t) => t.path !== path);
-      if (activeTabPath === path) {
-        setActiveTabPath(newTabs[Math.min(idx, newTabs.length - 1)]?.path ?? null);
-      }
+      setActiveTabPath((cur) => {
+        if (cur === path) {
+          return newTabs[Math.min(idx, newTabs.length - 1)]?.path ?? null;
+        }
+        return cur;
+      });
       return newTabs;
     });
-  }, [activeTabPath]);
+  }, []);
 
   const updateContent = (path: string, content: string) => {
     setTabs((prev) => prev.map((t) => (t.path === path ? { ...t, content } : t)));
@@ -87,10 +119,10 @@ export default function App() {
   }, []);
 
   const refreshTree = useCallback(async () => {
-    if (!folderPath) return;
-    const tree = await invoke<FileEntry[]>("read_folder_tree", { path: folderPath });
+    if (!folderPathRef.current) return;
+    const tree = await invoke<FileEntry[]>("read_folder_tree", { path: folderPathRef.current });
     setFileTree(tree);
-  }, [folderPath]);
+  }, []);
 
   useEffect(() => {
     if (folderPath) {
@@ -102,7 +134,103 @@ export default function App() {
     }
   }, [folderPath]);
 
-  // ── Keyboard shortcuts ───────────────────────────────────────────────────
+  // ── Real-time AI edits 
+  /**
+   * Apply (or update) a file edit produced by the AI. The change is written
+   * straight into the open tab so the user sees it live, then saved to disk.
+   */
+  const applyAIEdit = useCallback(async (edit: AIEdit) => {
+    const folder = folderPathRef.current;
+    if (!folder) {
+      setAiEdits((prev) =>
+        prev.map((e) =>
+          e.id === edit.id ? { ...e, status: "error", error: "No folder is open" } : e
+        )
+      );
+      return;
+    }
+    const absPath = resolveEditPath(edit.path, folder);
+    if (!absPath) {
+      setAiEdits((prev) =>
+        prev.map((e) =>
+          e.id === edit.id ? { ...e, status: "error", error: "Missing path" } : e
+        )
+      );
+      return;
+    }
+
+    // Mark this path as being edited by the AI (live indicator)
+    setAiEditingPaths((prev) => new Set(prev).add(absPath));
+
+    // If the file is already open, update it live in the editor
+    const existing = tabsRef.current.find((t) => t.path === absPath);
+    if (existing) {
+      setTabs((prev) =>
+        prev.map((t) => (t.path === absPath ? { ...t, content: edit.content } : t))
+      );
+      setActiveTabPath(absPath);
+    } else {
+      // Open it so the user sees the AI's work appear in real time
+      const name = absPath.replace(/\\/g, "/").split("/").pop() ?? absPath;
+      setTabs((prev) => [...prev, { path: absPath, name, content: edit.content, originalContent: edit.content }]);
+      setActiveTabPath(absPath);
+    }
+
+    // Persist to disk (creates parent dirs automatically)
+    try {
+      await invoke("save_file", { path: absPath, content: edit.content });
+      setTabs((prev) =>
+        prev.map((t) => (t.path === absPath ? { ...t, originalContent: t.content } : t))
+      );
+      setAiEdits((prev) =>
+        prev.map((e) => (e.id === edit.id ? { ...e, status: "applied" } : e))
+      );
+      // Refresh tree so new files appear in the explorer
+      refreshTree();
+    } catch (e) {
+      setAiEdits((prev) =>
+        prev.map((ed) =>
+          ed.id === edit.id ? { ...ed, status: "error", error: String(e) } : ed
+        )
+      );
+    } finally {
+      setAiEditingPaths((prev) => {
+        const next = new Set(prev);
+        next.delete(absPath);
+        return next;
+      });
+    }
+  }, [refreshTree]);
+
+  /**Called by ChatSidebar when the AI emits a new/updated edit block.*/
+  const handleAIEditBlocks = useCallback(async (blocks: { path: string; content: string; complete: boolean }[]) => {
+    for (const block of blocks) {
+      if (!block.path) continue;
+      const editId = `ai-${block.path}`;
+      const existing = aiEdits.find((e) => e.id === editId);
+      if (existing && existing.status === "applied" && existing.content === block.content) {
+        continue; // no change
+      }
+      const edit: AIEdit = {
+        id: editId,
+        path: block.path,
+        content: block.content,
+        status: "pending",
+      };
+      // Update the edit list (dedupe by path)
+      setAiEdits((prev) => {
+        const idx = prev.findIndex((e) => e.id === editId);
+        if (idx === -1) return [...prev, edit];
+        const copy = [...prev];
+        copy[idx] = { ...copy[idx], content: block.content, status: "pending" };
+        return copy;
+      });
+      // Apply live (debounced per path to avoid excessive disk writes)
+      await applyAIEdit(edit);
+    }
+  }, [aiEdits, applyAIEdit]);
+
+  // ── Keyboard shortcuts 
   useEffect(() => {
     const handleKey = (e: KeyboardEvent) => {
       if ((e.ctrlKey || e.metaKey) && e.key === "s") {
@@ -126,7 +254,7 @@ export default function App() {
 
   return (
     <div className="h-screen flex flex-col bg-zinc-950 text-zinc-100 overflow-hidden select-none">
-      {/* ── Top menu bar ──────────────────────────────────────────── */}
+      {/* ── Top menu bar ───── */}
       <TopMenu
         folderPath={folderPath}
         activeFile={activeTab}
@@ -178,9 +306,13 @@ export default function App() {
           }
         }}
         onRefreshTree={refreshTree}
+        onOpenAISettings={() => {
+          setChatOpen(true);
+          setForceAISettings(true);
+        }}
       />
 
-      {/* ── Main area ─────────────────────────────────────────────── */}
+      {/* ── Main area ──────── */}
       <div className="flex flex-1 overflow-hidden">
 
         {/* File explorer */}
@@ -218,7 +350,7 @@ export default function App() {
           </div>
         )}
 
-        {/* Editor column */}
+        {/* Editor column/ the big text frame thingy lol */}
         <div className="flex flex-1 flex-col overflow-hidden">
           {/* Tab bar */}
           {tabs.length > 0 && (
@@ -240,6 +372,9 @@ export default function App() {
                     <span className="absolute top-0 left-0 right-0 h-px bg-cyan-400" />
                   )}
                   <span className="truncate max-w-35">{tab.name}</span>
+                  {aiEditingPaths.has(tab.path) && (
+                    <span className="w-1.5 h-1.5 rounded-full bg-cyan-400 animate-pulse shrink-0" title="AI is editing this file" />
+                  )}
                   {isModified(tab) && (
                     <span className="w-1.5 h-1.5 rounded-full bg-amber-400 shrink-0" />
                   )}
@@ -261,6 +396,7 @@ export default function App() {
               onChange={(content) => updateContent(activeTab.path, content)}
               onSave={saveActiveFile}
               onCursorChange={setCursorLine}
+              aiEditing={aiEditingPaths.has(activeTab.path)}
             />
           ) : (
             <div className="flex-1 flex flex-col items-center justify-center text-zinc-700 gap-3">
@@ -272,8 +408,24 @@ export default function App() {
                 <polyline points="10 9 9 9 8 9"/>
               </svg>
               <div className="text-center">
-                <p className="text-sm">No file open</p>
-                <p className="text-xs mt-1">Open a folder or file from the menu</p>
+                <SplitText
+                  text="Welcome !"
+                  className="text-2xl font-semibold text-center text-amber-50"
+                  delay={50}
+                  duration={1.25}
+                  ease="power3.out"
+                  splitType="chars"
+                  from={{ opacity: 0, y: 40 }}
+                  to={{ opacity: 1, y: 0 }}
+                  threshold={0.1}
+                  rootMargin="-100px"
+                  repeatInterval={6}
+                  textAlign="center"
+                  onLetterAnimationComplete={handleAnimationComplete}
+                />
+                  <p className="font-semibold">
+                    Open a file/folder to start
+                  </p>
               </div>
             </div>
           )}
@@ -293,6 +445,11 @@ export default function App() {
               settings={aiSettings}
               onSettingsChange={setAISettings}
               onClose={() => setChatOpen(false)}
+              forceSettings={forceAISettings}
+              onForceSettingsHandled={() => setForceAISettings(false)}
+              folderPath={folderPath}
+              aiEdits={aiEdits}
+              onAIEditBlocks={handleAIEditBlocks}
             />
           )}
         </div>
