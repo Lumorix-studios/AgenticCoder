@@ -44,7 +44,9 @@ fn read_dir_recursive(path: &str, depth: usize, max_depth: usize) -> Vec<FileEnt
         return entries;
     };
     for entry in dir.flatten() {
-        let Ok(metadata) = entry.metadata() else { continue };
+        let Ok(metadata) = entry.metadata() else {
+            continue;
+        };
         let name = entry.file_name().to_string_lossy().to_string();
         // Skip hidden files and common noise
         if name.starts_with('.') || name == "node_modules" || name == "target" {
@@ -76,7 +78,9 @@ fn read_dir_recursive(path: &str, depth: usize, max_depth: usize) -> Vec<FileEnt
     }
     // Folders first, then alphabetical
     entries.sort_by(|a, b| {
-        b.is_dir.cmp(&a.is_dir).then(a.name.to_lowercase().cmp(&b.name.to_lowercase()))
+        b.is_dir
+            .cmp(&a.is_dir)
+            .then(a.name.to_lowercase().cmp(&b.name.to_lowercase()))
     });
     entries
 }
@@ -188,6 +192,7 @@ fn ai_config_path(app: tauri::AppHandle) -> Result<String, String> {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_http::init())
         .plugin(tauri_plugin_dialog::init())
         .invoke_handler(tauri::generate_handler![

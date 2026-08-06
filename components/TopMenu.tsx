@@ -1,11 +1,12 @@
 import { useState, useEffect, useRef } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
 import { invoke } from "@tauri-apps/api/core";
-import type { FileEntry, TabFile } from "../src/types";
+import type { FileEntry, Tab } from "../src/types";
+import FluidGlass from './FluidGlass'
 
 interface TopMenuProps {
   folderPath: string;
-  activeFile: TabFile | null;
+  activeFile: Tab | null;
   onFolderOpen: (data: { path: string; tree: FileEntry[] }) => void;
   onFileOpen:   (data: { path: string; content: string; name: string }) => void;
   onSaveActive: () => void;
@@ -14,6 +15,7 @@ interface TopMenuProps {
   onNewFolder: () => void;
   onRefreshTree: () => void;
   onOpenAISettings: () => void;
+  onOpenInfoPanel: () => void;
 }
 
 interface MenuDef {
@@ -27,6 +29,7 @@ export default function TopMenu({
   onSaveActive, onSaveAsActive,
   onNewFile, onNewFolder, onRefreshTree,
   onOpenAISettings,
+  onOpenInfoPanel,
 }: TopMenuProps) {
   const [openMenu, setOpenMenu] = useState<string | null>(null);
   const menuRef = useRef<HTMLDivElement>(null);
@@ -65,8 +68,10 @@ export default function TopMenu({
       label: "Settings",
       items: [
         { label: "Agent config settings", action: onOpenAISettings },
+        { label: "Information", action: onOpenInfoPanel },
       ],
     },
+   
     {
       label: "Agent",
       items: [
@@ -93,12 +98,27 @@ export default function TopMenu({
   return (
     <nav
       ref={menuRef}
-      className="h-8 bg-zinc-900 border-b border-zinc-800 flex items-center px-2 flex-shrink-0 z-50"
+      className="h-8 bg-zinc-900 border-b border-zinc-800 flex items-center px-2 flex-shrink-0 z-50 relative"
       data-tauri-drag-region
     >
-      {menus.map((menu) => (
-        <div key={menu.label} className="relative">
-          <button
+      <div className="absolute inset-0 opacity-20 pointer-events-none" style={{ height: '32px', overflow: 'hidden' }}>
+        <FluidGlass 
+            mode="bar"
+            barProps={{
+              scale: 1.2,
+              ior: 1.5,
+              thickness: 2,
+              chromaticAberration: 0.2,
+              transmission: 1,
+              roughness: 0,
+              anisotropy: 0.01
+            }}
+        />
+      </div>
+      <div className="relative flex items-center gap-1">
+        {menus.map((menu) => (
+          <div className="relative">
+            <button
             onClick={() => setOpenMenu(openMenu === menu.label ? null : menu.label)}
             className={`
               px-3 py-1 text-[13px] rounded hover:bg-zinc-800 transition-colors
@@ -133,9 +153,10 @@ export default function TopMenu({
           )}
         </div>
       ))}
+      </div>
 
       {/* Breadcrumb */}
-      {activeFile && (
+      {activeFile && "path" in activeFile && (
         <span className="ml-4 text-[11px] text-zinc-600 truncate max-w-xs">
           {activeFile.path.replace(/\\/g, "/")}
         </span>

@@ -1,9 +1,10 @@
 import { useState, useRef, useEffect } from "react";
-import type { ChatMessage, AISettings, TabFile, AIEdit, AuthMode } from "../src/types";
+import type { ChatMessage, AISettings, Tab, AIEdit, AuthMode } from "../src/types";
 import { PROVIDER_PRESETS, streamChat, testConnection, getAIConfigPath } from "../src/ai";
+import { IoCloseSharp, IoRefresh, IoSettings } from "react-icons/io5";
 
 interface Props {
-  activeFile: TabFile | null;
+  activeFile: Tab | null;
   settings: AISettings;
   onSettingsChange: (s: AISettings) => void;
   onClose: () => void;
@@ -198,8 +199,8 @@ export default function ChatSidebar({
     abortRef.current = controller;
 
     try {
-      const lang = activeFile ? getLang(activeFile.name) : "";
-      const systemContent = activeFile
+      const lang = activeFile && "name" in activeFile ? getLang(activeFile.name) : "";
+      const systemContent = activeFile && "content" in activeFile
         ? `You are an expert coding assistant. The user is editing "${activeFile.name}".\n\nCurrent file (${lang}):\n\`\`\`${lang}\n${activeFile.content.slice(0, 8000)}\n\`\`\`\n\nAnswer concisely. Use markdown and code blocks where appropriate.`
         : "You are an expert coding assistant. Answer questions clearly and concisely. Use markdown and code blocks.";
 
@@ -273,7 +274,7 @@ export default function ChatSidebar({
           <button
             onClick={() => setShowSettings(false)}
             className="text-zinc-500 hover:text-zinc-200 text-lg leading-none"
-          >×</button>
+          ><IoCloseSharp size={20}/></button>
         </div>
         <div className="flex-1 overflow-y-auto p-4 flex flex-col gap-4">
           {/* Provider preset */}
@@ -453,17 +454,17 @@ export default function ChatSidebar({
           onClick={() => setShowSettings(true)}
           className="text-zinc-600 hover:text-zinc-300 text-[13px] px-1"
           title="Settings"
-        >⚙</button>
+        >< IoSettings size={19}/></button>
         <button
           onClick={clearChat}
           disabled={isStreaming}
           className="text-zinc-600 hover:text-zinc-300 text-[11px] px-1 disabled:opacity-40"
           title="Clear chat"
-        >↺</button>
+        ><IoRefresh size={18}/></button>
         <button
           onClick={onClose}
           className="text-zinc-600 hover:text-zinc-200 px-1 text-lg leading-none"
-        >×</button>
+        ><IoCloseSharp size={20}/></button>
       </div>
 
       {/* Messages */}

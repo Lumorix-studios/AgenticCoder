@@ -1,4 +1,4 @@
-import { useMemo, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, useCallback } from "react";
 import type { TabFile } from "../src/types";
 
 interface Props {
@@ -181,21 +181,12 @@ export default function Editor({ tab, onChange, onSave, onCursorChange, aiEditin
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const lineNumRef = useRef<HTMLDivElement>(null);
   const highlightRef = useRef<HTMLDivElement>(null);
+  const rafRef = useRef<number>(0);
   const isModified = tab.content !== tab.originalContent;
   const lineCount = (tab.content.match(/\n/g) ?? []).length + 1;
 
-  // The textarea IS the single scroll element. onScroll keeps the line-number
-  // gutter and the (behind) highlight layer aligned.
-  const syncScroll = () => {
-    const ta = textareaRef.current;
-    if (!ta) return;
-    if (lineNumRef.current) lineNumRef.current.scrollTop = ta.scrollTop;
-    if (highlightRef.current) highlightRef.current.scrollTop = ta.scrollTop;
-  };
-
-  useEffect(() => { syncScroll(); }, [tab.content]);
-
-  const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+  // Memoize handlers to avoid re-creating on every render
+  const handleKeyDown = useCallback((e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     const ta = e.currentTarget;
     if ((e.ctrlKey || e.metaKey) && e.key === "s") {
       e.preventDefault();
@@ -225,16 +216,35 @@ export default function Editor({ tab, onChange, onSave, onCursorChange, aiEditin
       });
       return;
     }
-  };
+  }, [tab.content, onChange, onSave]);
 
-  const handleCursorChange = () => {
+  const handleCursorChange = useCallback(() => {
     const ta = textareaRef.current;
     if (!ta) return;
     const ln = (tab.content.slice(0, ta.selectionStart).match(/\n/g) ?? []).length + 1;
     onCursorChange(ln);
-  };
+  }, [tab.content, onCursorChange]);
 
-  const tokens = useMemo(() => tokenize(tab.content), [tab.content]);
+  // The textarea IS the single scroll element. onScroll keeps the line-number
+  // gutter and the (behind) highlight layer aligned.
+  const syncScroll = useCallback(() => {
+    const ta = textareaRef.current;
+    if (!ta) return;
+    if (lineNumRef.current) lineNumRef.current.scrollTop = ta.scrollTop;
+    if (highlightRef.current) highlightRef.current.scrollTop = ta.scrollTop;
+  }, []);
+
+  useEffect(() => { syncScroll(); }, [tab.content, syncScroll]);
+
+  // Tokenize on content change with rAF to avoid blocking typing
+  const [tokens, setTokens] = useState<Token[]>([]);
+  useEffect(() => {
+    cancelAnimationFrame(rafRef.current);
+    rafRef.current = requestAnimationFrame(() => {
+      setTokens(tokenize(tab.content));
+    });
+    return () => cancelAnimationFrame(rafRef.current);
+  }, [tab.content]);
 
   return (
     <div className="flex-1 flex flex-col overflow-hidden bg-zinc-950">
@@ -318,7 +328,7 @@ export default function Editor({ tab, onChange, onSave, onCursorChange, aiEditin
               paddingTop: `${PAD_TOP}px`,
               paddingLeft: `${PAD_LEFT}px`,
               paddingRight: "24px",
-              paddingBottom: `${PAD_TOP}px`,
+              paddingBottom: "0px",
               boxSizing: "border-box",
               height: "100%",
               width: "100%",

@@ -1,4 +1,5 @@
 import React, { useRef, useEffect, useState } from 'react';
+import type { ElementType } from 'react';
 import { gsap } from 'gsap';
 import { ScrollTrigger } from 'gsap/ScrollTrigger';
 import { SplitText as GSAPSplitText } from 'gsap/SplitText';
@@ -18,7 +19,7 @@ export interface SplitTextProps {
   threshold?: number;
   rootMargin?: string;
   repeatInterval?: number;
-  tag?: 'h1' | 'h2' | 'h3' | 'h4' | 'h5' | 'h6' | 'p' | 'span';
+  tag?: ElementType;
   textAlign?: React.CSSProperties['textAlign'];
   onLetterAnimationComplete?: () => void;
 }
@@ -172,12 +173,11 @@ const SplitText: React.FC<SplitTextProps> = ({
       willChange: 'transform, opacity'
     };
     const classes = `split-parent overflow-hidden inline-block whitespace-normal ${className}`;
-    const Tag = (tag || 'p') as React.ElementType;
 
-    return (
-      <Tag ref={ref} style={style} className={classes}>
-        {text}
-      </Tag>
+    return React.createElement(
+      tag,
+      { ref, style, className: classes } as Record<string, unknown>,
+      text
     );
   };
 

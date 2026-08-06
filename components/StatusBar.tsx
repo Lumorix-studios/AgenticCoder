@@ -1,7 +1,7 @@
-import type { TabFile } from "../src/types";
+import type { Tab } from "../src/types";
 
 interface Props {
-  activeFile: TabFile | null;
+  activeFile: Tab | null;
   isModified: boolean;
   line: number;
   chatOpen: boolean;
@@ -22,8 +22,8 @@ function getLang(name: string): string {
 }
 
 export default function StatusBar({ activeFile, isModified, line, chatOpen, onToggleChat, folderPath }: Props) {
-  const lang = activeFile ? getLang(activeFile.name) : "";
-  const lineCount = activeFile ? (activeFile.content.match(/\n/g) ?? []).length + 1 : 0;
+  const lang = activeFile && "name" in activeFile ? getLang(activeFile.name) : "";
+  const lineCount = activeFile && "content" in activeFile ? (activeFile.content.match(/\n/g) ?? []).length + 1 : 0;
 
   return (
     <div className="h-6 bg-zinc-900 border-t border-zinc-800 flex items-center px-3 gap-3 flex-shrink-0 text-[11px]">
@@ -38,7 +38,9 @@ export default function StatusBar({ activeFile, isModified, line, chatOpen, onTo
             {!isModified && activeFile && (
               <span className="text-green-500 flex-shrink-0">✓&nbsp;Saved</span>
             )}
-            <span className="truncate text-zinc-600">{activeFile.path.replace(/\\/g, "/")}</span>
+            {"path" in activeFile && (
+              <span className="truncate text-zinc-600">{activeFile.path.replace(/\\/g, "/")}</span>
+            )}
           </>
         ) : folderPath ? (
           <span className="text-zinc-600 truncate">{folderPath}</span>

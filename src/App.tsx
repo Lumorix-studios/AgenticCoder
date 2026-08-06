@@ -6,9 +6,10 @@ import FileExplorer from "../components/FileExplorer.tsx";
 import Editor from "../components/Editor.tsx";
 import ChatSidebar from "../components/ChatSidebar.tsx";
 import SplitText from "../components/SplitText.tsx";
+import InfoPanel from "../components/InfoPanel";
 
 import StatusBar from "../components/StatusBar.tsx";
-import type { TabFile, FileEntry, AISettings, AIEdit } from "./types";
+import type { FileEntry, AISettings, AIEdit, Tab, TabFile } from "./types";
 import { loadAISettings, saveAISettings, resolveEditPath } from "./ai";
 import "./editor.css";
 
@@ -17,11 +18,12 @@ const handleAnimationComplete = () => {
 };
 
 export default function App() {
-  const [tabs, setTabs] = useState<TabFile[]>([]);
+  const [tabs, setTabs] = useState<Tab[]>([]);
   const [activeTabPath, setActiveTabPath] = useState<string | null>(null);
   const [fileTree, setFileTree] = useState<FileEntry[]>([]);
   const [folderPath, setFolderPath] = useState("");
   const [chatOpen, setChatOpen] = useState(false);
+  const [infoPanelOpen, setInfoPanelOpen] = useState(false);
   const [aiSettings, setAISettings] = useState<AISettings>({
     provider: "openai",
     apiUrl: "https://api.openai.com/v1",
@@ -37,11 +39,13 @@ export default function App() {
   const [cursorLine, setCursorLine] = useState(1);
   const [aiEdits, setAiEdits] = useState<AIEdit[]>([]);
   const [aiEditingPaths, setAiEditingPaths] = useState<Set<string>>(new Set());
-  const activeTabRef = useRef<TabFile | null>(null);
-  const tabsRef = useRef<TabFile[]>([]);
+  const activeTabRef = useRef<Tab | null>(null);
+  const tabsRef = useRef<Tab[]>([]);
   const folderPathRef = useRef(folderPath);
 
-  const activeTab = tabs.find((t) => t.path === activeTabPath) ?? null;
+  const activeTab = tabs.find((t) => 
+    "path" in t ? t.path === activeTabPath : "id" in t && t.id === activeTabPath
+  ) as Tab | null;
 
   // Keep refs in sync (outside render)
   useEffect(() => {
@@ -77,7 +81,7 @@ export default function App() {
   // ── File operations 
   const openTab = useCallback(async (path: string, contentOverride?: string) => {
     // Already open — just activate
-    if (tabsRef.current.some((t) => t.path === path)) {
+    if (tabsRef.current.some((t) => "path" in t && t.path === path)) {
       setActiveTabPath(path);
       return;
     }
@@ -87,13 +91,14 @@ export default function App() {
     setActiveTabPath(path);
   }, []);
 
-  const closeTab = useCallback((path: string) => {
+  const closeTab = useCallback((pathOrId: string) => {
     setTabs((prev) => {
-      const idx = prev.findIndex((t) => t.path === path);
-      const newTabs = prev.filter((t) => t.path !== path);
+      const idx = prev.findIndex((t) => "path" in t ? t.path === pathOrId : "id" in t && t.id === pathOrId);
+      const newTabs = prev.filter((t) => "path" in t ? t.path !== pathOrId : "id" in t && t.id !== pathOrId);
       setActiveTabPath((cur) => {
-        if (cur === path) {
-          return newTabs[Math.min(idx, newTabs.length - 1)]?.path ?? null;
+        if (cur === pathOrId) {
+          const nextTab = newTabs[Math.min(idx, newTabs.length - 1)];
+          return nextTab ? ("path" in nextTab ? nextTab.path : nextTab.id) : null;
         }
         return cur;
       });
@@ -101,17 +106,18 @@ export default function App() {
     });
   }, []);
 
-  const updateContent = (path: string, content: string) => {
-    setTabs((prev) => prev.map((t) => (t.path === path ? { ...t, content } : t)));
-  };
+  const updateContent = useCallback((path: string, content: string) => {
+    setTabs((prev) => prev.map((t) => ("path" in t && t.path === path ? { ...t, content } : t)));
+  }, []);
 
   const saveActiveFile = useCallback(async () => {
     const tab = activeTabRef.current;
-    if (!tab) return;
+    if (!tab || !("path" in tab)) return;
+    const tabFile = tab as TabFile;
     try {
-      await invoke("save_file", { path: tab.path, content: tab.content });
+      await invoke("save_file", { path: tabFile.path, content: tabFile.content });
       setTabs((prev) =>
-        prev.map((t) => (t.path === tab.path ? { ...t, originalContent: t.content } : t))
+        prev.map((t) => ("path" in t && t.path === tab.path ? { ...t, originalContent: t.content } : t))
       );
     } catch (e) {
       console.error("Save failed:", e);
@@ -163,10 +169,10 @@ export default function App() {
     setAiEditingPaths((prev) => new Set(prev).add(absPath));
 
     // If the file is already open, update it live in the editor
-    const existing = tabsRef.current.find((t) => t.path === absPath);
+    const existing = tabsRef.current.find((t) => "path" in t && t.path === absPath);
     if (existing) {
       setTabs((prev) =>
-        prev.map((t) => (t.path === absPath ? { ...t, content: edit.content } : t))
+        prev.map((t) => ("path" in t && t.path === absPath ? { ...t, content: edit.content } : t))
       );
       setActiveTabPath(absPath);
     } else {
@@ -180,7 +186,7 @@ export default function App() {
     try {
       await invoke("save_file", { path: absPath, content: edit.content });
       setTabs((prev) =>
-        prev.map((t) => (t.path === absPath ? { ...t, originalContent: t.content } : t))
+        prev.map((t) => ("path" in t && t.path === absPath ? { ...t, originalContent: t.content } : t))
       );
       setAiEdits((prev) =>
         prev.map((e) => (e.id === edit.id ? { ...e, status: "applied" } : e))
@@ -207,18 +213,18 @@ export default function App() {
     for (const block of blocks) {
       if (!block.path) continue;
       const editId = `ai-${block.path}`;
-      const existing = aiEdits.find((e) => e.id === editId);
-      if (existing && existing.status === "applied" && existing.content === block.content) {
-        continue; // no change
-      }
-      const edit: AIEdit = {
-        id: editId,
-        path: block.path,
-        content: block.content,
-        status: "pending",
-      };
-      // Update the edit list (dedupe by path)
+      // Use functional updates to avoid stale closures on aiEdits
       setAiEdits((prev) => {
+        const existing = prev.find((e) => e.id === editId);
+        if (existing && existing.status === "applied" && existing.content === block.content) {
+          return prev; // no change
+        }
+        const edit: AIEdit = {
+          id: editId,
+          path: block.path,
+          content: block.content,
+          status: "pending",
+        };
         const idx = prev.findIndex((e) => e.id === editId);
         if (idx === -1) return [...prev, edit];
         const copy = [...prev];
@@ -226,9 +232,9 @@ export default function App() {
         return copy;
       });
       // Apply live (debounced per path to avoid excessive disk writes)
-      await applyAIEdit(edit);
+      await applyAIEdit({ id: editId, path: block.path, content: block.content, status: "pending" });
     }
-  }, [aiEdits, applyAIEdit]);
+  }, [applyAIEdit]);
 
   // ── Keyboard shortcuts 
   useEffect(() => {
@@ -243,14 +249,20 @@ export default function App() {
       }
       if ((e.ctrlKey || e.metaKey) && e.key === "w") {
         e.preventDefault();
-        if (activeTabRef.current) closeTab(activeTabRef.current.path);
+        if (activeTabRef.current) {
+          if ("path" in activeTabRef.current) {
+            closeTab(activeTabRef.current.path);
+          } else if ("id" in activeTabRef.current) {
+            closeTab(activeTabRef.current.id);
+          }
+        }
       }
     };
     window.addEventListener("keydown", handleKey);
     return () => window.removeEventListener("keydown", handleKey);
   }, [saveActiveFile, closeTab]);
 
-  const isModified = (tab: TabFile) => tab.content !== tab.originalContent;
+  const isModified = useCallback((tab: Tab) => "content" in tab ? tab.content !== tab.originalContent : false, []);
 
   return (
     <div className="h-screen flex flex-col bg-zinc-950 text-zinc-100 overflow-hidden select-none">
@@ -265,7 +277,7 @@ export default function App() {
           setActiveTabPath(null);
         }}
         onFileOpen={({ path, content, name }) => {
-          if (tabs.some((t) => t.path === path)) {
+          if (tabs.some((t) => "path" in t && t.path === path)) {
             setActiveTabPath(path);
             return;
           }
@@ -275,10 +287,11 @@ export default function App() {
         onSaveActive={saveActiveFile}
         onSaveAsActive={async () => {
           const tab = activeTabRef.current;
-          if (!tab) return;
-          const dest = await save({ defaultPath: tab.name });
+          if (!tab || !("path" in tab)) return;
+          const tabFile = tab as TabFile;
+          const dest = await save({ defaultPath: tabFile.name });
           if (dest) {
-            await invoke("save_file", { path: dest, content: tab.content });
+            await invoke("save_file", { path: dest, content: tabFile.content });
           }
         }}
         onNewFile={async () => {
@@ -310,7 +323,11 @@ export default function App() {
           setChatOpen(true);
           setForceAISettings(true);
         }}
+        onOpenInfoPanel={() => setInfoPanelOpen(true)}
       />
+
+      {/* ── Info Panel Overlay ───── */}
+      <InfoPanel isOpen={infoPanelOpen} onClose={() => setInfoPanelOpen(false)} />
 
       {/* ── Main area ──────── */}
       <div className="flex flex-1 overflow-hidden">
@@ -357,32 +374,39 @@ export default function App() {
             <div className="h-9 shrink-0 flex items-end border-b border-zinc-800 bg-zinc-900 overflow-x-auto">
               {tabs.map((tab) => (
                 <div
-                  key={tab.path}
-                  onClick={() => setActiveTabPath(tab.path)}
+                  key={"path" in tab ? tab.path : tab.id}
+                  onClick={() => setActiveTabPath("path" in tab ? tab.path : tab.id)}
                   className={`
                     group h-full flex items-center gap-1.5 px-4 text-[12px] font-medium
                     border-r border-zinc-800 cursor-pointer shrink-0 relative
-                    ${tab.path === activeTabPath
+                    ${("path" in tab ? tab.path : tab.id) === activeTabPath
                       ? "bg-zinc-950 text-zinc-100"
                       : "bg-zinc-900 text-zinc-500 hover:bg-zinc-800 hover:text-zinc-300"
                     }
                   `}
                 >
-                  {tab.path === activeTabPath && (
+                  {("path" in tab ? tab.path : tab.id) === activeTabPath && (
                     <span className="absolute top-0 left-0 right-0 h-px bg-cyan-400" />
                   )}
                   <span className="truncate max-w-35">{tab.name}</span>
-                  {aiEditingPaths.has(tab.path) && (
+                  {"path" in tab && aiEditingPaths.has(tab.path) && (
                     <span className="w-1.5 h-1.5 rounded-full bg-cyan-400 animate-pulse shrink-0" title="AI is editing this file" />
                   )}
                   {isModified(tab) && (
                     <span className="w-1.5 h-1.5 rounded-full bg-amber-400 shrink-0" />
                   )}
                   <button
-                    onClick={(e) => { e.stopPropagation(); closeTab(tab.path); }}
+                    onClick={(e) => { 
+                      e.stopPropagation(); 
+                      if ("path" in tab) {
+                        closeTab(tab.path);
+                      } else if ("id" in tab) {
+                        closeTab(tab.id);
+                      }
+                    }}
                     className="opacity-0 group-hover:opacity-100 ml-0.5 text-zinc-500 hover:text-zinc-200 w-4 h-4 flex items-center justify-center rounded hover:bg-zinc-700 shrink-0"
                   >
-                    ×
+                    {"path" in tab ? "×" : ""}
                   </button>
                 </div>
               ))}
@@ -391,13 +415,37 @@ export default function App() {
 
           {/* Editor or empty state */}
           {activeTab ? (
-            <Editor
-              tab={activeTab}
-              onChange={(content) => updateContent(activeTab.path, content)}
-              onSave={saveActiveFile}
-              onCursorChange={setCursorLine}
-              aiEditing={aiEditingPaths.has(activeTab.path)}
-            />
+            "path" in activeTab ? (
+              <Editor
+                tab={activeTab}
+                onChange={(content) => updateContent(activeTab.path, content)}
+                onSave={saveActiveFile}
+                onCursorChange={setCursorLine}
+                aiEditing={aiEditingPaths.has(activeTab.path)}
+              />
+            ) : (
+              /* Special tab content (Information, Settings, etc.) */
+              <div className="flex-1 overflow-auto p-6">
+                {activeTab.type === "information" && (
+                  <div className="max-w-2xl">
+                    <h2 className="text-xl font-semibold text-zinc-100 mb-4">Information</h2>
+                    <div className="space-y-3 text-sm text-zinc-400">
+                      <p>This is an example of a special tab. You can create your own tabs like this!</p>
+                      <p>To add more special tabs, follow the pattern in TopMenu.tsx and App.tsx.</p>
+                      <div className="mt-4 p-4 bg-zinc-900 rounded border border-zinc-800">
+                        <h3 className="text-zinc-200 font-medium mb-2">How it works:</h3>
+                        <ul className="list-disc list-inside space-y-1">
+                          <li>Add a new type in the SpecialTab interface</li>
+                          <li>Create a callback in TopMenuProps</li>
+                          <li>Handle the tab opening in App.tsx</li>
+                          <li>Add content rendering based on tab type</li>
+                        </ul>
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </div>
+            )
           ) : (
             <div className="flex-1 flex flex-col items-center justify-center text-zinc-700 gap-3">
               <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1">

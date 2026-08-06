@@ -13,6 +13,15 @@ export interface TabFile {
   originalContent: string; // for dirty detection
 }
 
+/** Special tabs that aren't files (e.g., Information, Settings panels) */
+export interface SpecialTab {
+  id: string;
+  name: string;
+  type: "information" | "settings" | "custom";
+}
+
+export type Tab = TabFile | SpecialTab;
+
 export interface ChatMessage {
   id: string;
   role: "user" | "assistant";
