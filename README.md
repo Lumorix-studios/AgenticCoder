@@ -70,6 +70,6 @@ npm run tauri dev
 
 ## Project Status
 
-This project was started in **August 2026** and is under active development. Features, APIs, and the interface may change frequently as development progresses.
+This project was started in **June 2026** and is under active development. Features, APIs, and the interface may change frequently as development progresses.
 
 Feedback, bug reports, and suggestions are welcome.
