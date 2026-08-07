@@ -33,11 +33,10 @@ AgenticCoder is an AI-powered desktop coding environment focused on providing a 
 * File creation, deletion, and renaming
 * Save & Save As
 * Project-wide search
-* Terminal integration
-* Git integration
+
 * Themes
 * Settings
-* Plugin system
+
 
 ## Tech Stack
 
