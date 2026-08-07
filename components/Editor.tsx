@@ -18,7 +18,7 @@ function getLang(name: string): string {
     rs: "Rust", py: "Python", json: "JSON", md: "Markdown",
     html: "HTML", css: "CSS", scss: "SCSS", toml: "TOML",
     yaml: "YAML", yml: "YAML", sh: "Shell", sql: "SQL",
-    c: "C", cpp: "C++", go: "Go", java: "Java",
+    c: "C", cpp: "C++", go: "Go", java: "Java", 
   };
   return map[ext] ?? (ext.toUpperCase() || "Plain Text");
 }
