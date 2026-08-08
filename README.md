@@ -33,11 +33,10 @@ AgenticCoder is an AI-powered desktop coding environment focused on providing a 
 * File creation, deletion, and renaming
 * Save & Save As
 * Project-wide search
-* Terminal integration
-* Git integration
+
 * Themes
 * Settings
-* Plugin system
+
 
 ## Tech Stack
 
@@ -71,5 +70,6 @@ npm run tauri dev
 ## Project Status
 
 This project was started in **June 2026** and is under active development. Features, APIs, and the interface may change frequently as development progresses.
+Please check out the Privacy policies before utilizing the application <a href = "https://github.com/Lumorix-studios/AgenticCoder/blob/main/PRIVACYPOLICY.MD">Privacy policy</a>
 
 Feedback, bug reports, and suggestions are welcome.
