@@ -26,6 +26,7 @@ export interface ChatMessage {
   id: string;
   role: "user" | "assistant";
   content: string;
+  toolCalls?: ToolCall[];
 }
 
 /** How the provider authenticates requests */
@@ -66,4 +67,27 @@ export interface ProviderPreset {
   models: string[];
   /** Placeholder shown in the model input */
   modelPlaceholder?: string;
+}
+
+/** A tool call requested by the AI model */
+export interface ToolCall {
+  id: string;
+  name: string;
+  arguments: string;
+}
+
+/** Result of executing a tool */
+export interface ToolResult {
+  toolCallId: string;
+  output: string;
+  error?: string;
+}
+
+/** A special tab that displays AI-generated content (e.g. tool results, summaries) */
+export interface AITab {
+  id: string;
+  name: string;
+  type: "ai";
+  content: string;
+  icon?: string;
 }

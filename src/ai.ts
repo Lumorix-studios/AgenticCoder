@@ -1,5 +1,10 @@
 import { invoke } from "@tauri-apps/api/core";
-import type { AISettings, ChatMessage, ProviderPreset } from "./types";
+import type { AISettings, ChatMessage, ProviderPreset, ToolCall, ToolResult } from "./types";
+import { TOOL_SCHEMAS, executeTool } from "./tools";
+import { resolveEditPath, guessPathForBlock } from "./pathUtils";
+
+// Re-export for backward compatibility (App.tsx imports these from "./ai")
+export { resolveEditPath, guessPathForBlock };
 export const PROVIDER_PRESETS: ProviderPreset[] = [
   {
     id: "openai",
@@ -130,6 +135,23 @@ export const PROVIDER_PRESETS: ProviderPreset[] = [
     modelPlaceholder: "your-model",
   },
 ];
+
+/** Handlers for agentic tool-calling mode */
+export interface AgentStreamHandlers {
+  onDelta?: (delta: string) => void;
+  onToolCall?: (toolCall: ToolCall) => void;
+  onToolResult?: (result: ToolResult) => void;
+  /** Called when a tool modifies a file, with the path and new content */
+  onFileChange?: (path: string, content: string) => void;
+  onDone?: (full: string) => void;
+  onError?: (err: Error) => void;
+}
+
+export type AgentMessage =
+  | { role: "system"; content: string }
+  | { role: "user"; content: string }
+  | { role: "assistant"; content: string; toolCalls?: ToolCall[] }
+  | { role: "tool"; toolCallId: string; output: string; error?: string };
 
 export const DEFAULT_AI_SETTINGS: AISettings = {
   provider: "openai",
@@ -288,54 +310,6 @@ export function parseEditBlocks(buffer: string): StreamEdit[] {
     });
   }
   return out;
-}
-
-/** Convert a path from the AI into an absolute filesystem path. */
-export function resolveEditPath(rawPath: string, folderPath: string): string {
-  if (!rawPath) return "";
-  let p = rawPath.trim().replace(/\\/g, "/");
-  // Strip markdown formatting / quotes
-  p = p.replace(/^`+|`+$/g, "").replace(/^['"]|['"]$/g, "");
-  // Normalize spurious prefixes
-  p = p.replace(/^(?:\.\/|\.\.\/)/g, "");
-  if (p.startsWith("/") && folderPath) {
-    // Absolute-ish: strip drive prefix like /c:/ or /C:/
-    p = p.replace(/^\/[a-zA-Z]:\//, "");
-  }
-  if (folderPath) {
-    const folderNorm = folderPath.replace(/\\/g, "/").replace(/\/+$/, "");
-    if (p.toLowerCase().startsWith(folderNorm.toLowerCase() + "/")) {
-      p = p.slice(folderNorm.length + 1);
-    }
-  }
-  // If the AI gave a bare filename, attach it to the folder
-  let candidate = p;
-  if (folderPath && !/^[a-zA-Z]:/.test(p) && !p.startsWith("/")) {
-    candidate = `${folderPath.replace(/\\/g, "/")}/${p}`;
-  }
-  return candidate;
-}
-
-/** Guess the extension of a code block that the AI didn't name. */
-export function guessPathForBlock(
-  block: string,
-  folderPath: string,
-  activeFileName?: string
-): string {
-  const known: Record<string, string> = {
-    typescript: "ts", ts: "ts", tsx: "tsx", javascript: "js", js: "js",
-    jsx: "jsx", rust: "rs", rs: "rs", python: "py", py: "py",
-    json: "json", markdown: "md", md: "md", html: "html", css: "css",
-    scss: "scss", shell: "sh", bash: "sh", sh: "sh", toml: "toml",
-    yaml: "yaml", yml: "yaml", sql: "sql", c: "c", cpp: "cpp",
-    go: "go", java: "java", text: "txt", plaintext: "txt",
-  };
-  const firstLine = block.trim().split("\n")[0] ?? "";
-  const langMatch = firstLine.match(/^```([\w+-]+)/);
-  const lang = langMatch?.[1]?.toLowerCase() ?? "";
-  const base = activeFileName?.replace(/\.[^.]+$/, "") ?? "file";
-  const name = lang && known[lang] ? `${base || "file"}.${known[lang]}` : activeFileName ?? "file.txt";
-  return folderPath ? `${folderPath.replace(/\\/g, "/")}/${name}` : name;
 }
 
 /* ──────────────────────────────────────────────────────────────────────────
@@ -620,3 +594,315 @@ export async function testConnection(settings: AISettings): Promise<string> {
   await res.text();
   return `${settings.model || "model"} responded OK`;
 }
+
+/* ──────────────────────────────────────────────────────────────────────────
+   Agentic tool-calling mode
+   ────────────────────────────────────────────────────────────────────────── */
+
+const AGENT_PROMPT = `You are an agentic coding assistant. You MUST use the available tools to read, write, and modify files in the workspace.
+
+CRITICAL RULES:
+1. When the user asks you to create, edit, read, or delete files - YOU MUST USE TOOLS. Do not just describe what you would do.
+2. To create or modify a file, use the write_file tool with the COMPLETE file content.
+3. To read a file, use the read_file tool.
+4. To see what files exist, use list_dir or read_file_tree.
+5. Only respond with plain text for greetings, questions, or explanations that don't involve files.
+
+The workspace root is: {WORKSPACE_ROOT}
+
+Available tools:
+- read_file: Read a file's full contents (requires "path" parameter)
+- write_file: Write (create or overwrite) a file with full content (requires "path" and "content" parameters)
+- list_dir: List files and folders in a directory (requires "path" parameter)
+- search_files: Search for files by name pattern (requires "path" and "pattern" parameters)
+- delete_file: Delete a file (requires "path" parameter)
+- create_dir: Create a directory (requires "path" parameter)
+- read_file_tree: Get a recursive file tree (requires "path" parameter)
+- run_shell: Execute shell commands like npm, git, cargo, node, python, ls, dir, etc. (requires "command" parameter, optional "args" and "cwd")
+
+IMPORTANT: When using write_file, the "content" parameter must contain the ENTIRE file content, not just the changes.
+
+Each tool call must be exact JSON.`;
+
+interface AgentSSEChunk {
+  type?: string;
+  delta?: { type?: string; text?: string };
+  choices?: Array<{
+    delta?: {
+      content?: string;
+      tool_calls?: Array<{
+        index?: number;
+        id?: string;
+        type?: string;
+        function?: { name?: string; arguments?: string };
+      }>;
+    };
+  }>;
+  error?: { message?: string };
+}
+
+/**
+ * Stream an agentic chat completion with full tool-calling support.
+ * The agent will loop: call tools, get results, call more tools, until it
+ * produces a final text response with no tool calls.
+ *
+ * Handlers are called for each event so the UI can display tool calls
+ * and results in real time.
+ */
+export async function streamAgentChat({
+  settings,
+  messages,
+  folderPath,
+  handlers,
+  signal,
+}: {
+  settings: AISettings;
+  messages: ChatMessage[];
+  folderPath: string;
+  handlers: AgentStreamHandlers;
+  signal?: AbortSignal;
+}): Promise<string> {
+  const fetchImpl = (await getFetch()) ?? window.fetch.bind(window);
+
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+  };
+  if (settings.authMode === "bearer" && settings.apiKey) {
+    headers.Authorization = `Bearer ${settings.apiKey}`;
+  } else if (settings.authMode === "x-api-key" && settings.apiKey) {
+    headers["x-api-key"] = settings.apiKey;
+  }
+  const custom = parseHeaders(settings.customHeaders);
+  if (custom) Object.assign(headers, custom);
+
+  const base = settings.apiUrl.replace(/\/+$/, "");
+  const editedFiles = `Workspace root: ${folderPath || "(none)"}`;
+
+  const sysPrompt = AGENT_PROMPT.replace("{WORKSPACE_ROOT}", folderPath || "(none)");
+
+  // Convert AgentMessage[] to API message format
+  const buildApiMessages = (msgs: AgentMessage[]) => {
+    const apiMsgs: Array<Record<string, unknown>> = [];
+    for (const m of msgs) {
+      if (m.role === "user") {
+        apiMsgs.push({ role: "user", content: m.content });
+      } else if (m.role === "assistant") {
+        const msg: Record<string, unknown> = { role: "assistant", content: m.content || null };
+        if (m.toolCalls && m.toolCalls.length > 0) {
+          msg.tool_calls = m.toolCalls.map((tc) => ({
+            id: tc.id,
+            type: "function",
+            function: { name: tc.name, arguments: tc.arguments },
+          }));
+        }
+        apiMsgs.push(msg);
+      } else if (m.role === "tool") {
+        apiMsgs.push({
+          role: "tool",
+          tool_call_id: m.toolCallId,
+          content: m.error ? `[Error: ${m.error}]\n${m.output}` : m.output,
+        });
+      }
+    }
+    return apiMsgs;
+  };
+
+  let conversation: AgentMessage[] = [
+    { role: "system", content: `${editedFiles}\n\n${sysPrompt}` },
+  ];
+
+  // Add the user's actual messages
+  for (const msg of messages) {
+    if (msg.role === "user" || msg.role === "assistant") {
+      conversation.push(
+        msg.role === "user"
+          ? { role: "user", content: msg.content }
+          : { 
+              role: "assistant", 
+              content: msg.content,
+              toolCalls: msg.toolCalls 
+            }
+      );
+    }
+  }
+
+  let finalResponse = "";
+  const maxIterations = 20;
+  let iteration = 0;
+
+  while (iteration < maxIterations) {
+    iteration++;
+
+    if (signal?.aborted) {
+      handlers.onError?.(new Error("Aborted"));
+      return finalResponse;
+    }
+
+    const url = `${base}/chat/completions`;
+    const body: Record<string, unknown> = {
+      model: settings.model,
+      stream: true,
+      messages: buildApiMessages(conversation),
+      tools: TOOL_SCHEMAS,
+      tool_choice: "auto",
+      max_tokens: 8192,
+    };
+    const extra = parseExtraBody(settings.extraBody);
+    if (extra) Object.assign(body, extra);
+
+    let response: Response;
+    try {
+      response = await fetchImpl(url, {
+        method: "POST",
+        headers,
+        body: JSON.stringify(body),
+        signal,
+      } as RequestInit);
+    } catch (e) {
+      if ((e as Error).name === "AbortError") throw e;
+      throw describeFetchError(e, url);
+    }
+
+    if (!response.ok) {
+      let detail = "";
+      try { detail = await response.text(); } catch { /* ignore */ }
+      const errMsg = `${response.status} ${response.statusText}${detail ? ` — ${detail.slice(0, 300)}` : ""}`;
+      handlers.onError?.(new Error(errMsg));
+      throw new Error(errMsg);
+    }
+
+    const reader = response.body?.getReader();
+    if (!reader) throw new Error("No response body stream");
+
+    const decoder = new TextDecoder();
+    let buffer = "";
+    let fullDelta = "";
+    // Accumulate tool calls by index
+    const toolCalls: ToolCall[] = [];
+    let hasToolCalls = false;
+
+    const processAgentBuffer = (buf: string): string => {
+      const clean = buf.replace(/\r\n/g, "\n");
+      const lines = clean.split("\n");
+      const pending = lines.pop() ?? "";
+      for (const line of lines) {
+        const trimmed = line.trim();
+        if (!trimmed.startsWith("data:")) continue;
+        const raw = trimmed.slice(5).trim();
+        if (raw === "[DONE]") continue;
+        let json: AgentSSEChunk;
+        try {
+          json = JSON.parse(raw) as AgentSSEChunk;
+        } catch { continue; }
+        try {
+          const delta = json.choices?.[0]?.delta ?? {};
+          // Text content
+          const text = delta.content ?? "";
+          if (text) {
+            fullDelta += text;
+            handlers.onDelta?.(text);
+          }
+          // Tool calls
+          const tcs = delta.tool_calls;
+          if (tcs && tcs.length > 0) {
+            hasToolCalls = true;
+            for (const tc of tcs) {
+              const idx = tc.index ?? 0;
+              if (!toolCalls[idx]) {
+                toolCalls[idx] = {
+                  id: tc.id ?? `call_${iteration}_${idx}`,
+                  name: tc.function?.name ?? "",
+                  arguments: tc.function?.arguments ?? "",
+                };
+              } else {
+                // Append to existing
+                if (tc.function?.arguments) {
+                  toolCalls[idx].arguments += tc.function.arguments;
+                }
+                if (tc.function?.name) {
+                  toolCalls[idx].name = tc.function.name;
+                }
+              }
+            }
+          }
+        } catch { /* ignore */ }
+      }
+      return pending;
+    };
+
+    // Streaming loop
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      buffer = processAgentBuffer(buffer);
+    }
+    buffer += decoder.decode();
+    processAgentBuffer(buffer);
+
+    // Filter out empty tool calls and log for debugging
+    const validToolCalls = toolCalls.filter((tc) => tc.name && tc.arguments);
+    if (validToolCalls.length > 0) {
+      console.log("[Agent] Tool calls detected:", validToolCalls);
+    }
+
+    // Build the assistant message
+    const assistantMsg: AgentMessage = {
+      role: "assistant",
+      content: fullDelta,
+      toolCalls: hasToolCalls ? validToolCalls : undefined,
+    };
+    conversation.push(assistantMsg);
+
+    // If no tool calls, we're done
+    if (!hasToolCalls || (assistantMsg.toolCalls?.length ?? 0) === 0) {
+      finalResponse = fullDelta;
+      handlers.onDone?.(fullDelta);
+      break;
+    }
+
+    // Execute tool calls
+    const toolCallsToSend = assistantMsg.toolCalls!;
+    for (const tc of toolCallsToSend) {
+      handlers.onToolCall?.(tc);
+    }
+
+    // Execute all tools (could be parallel for independent calls)
+    const results: ToolResult[] = [];
+    for (const tc of toolCallsToSend) {
+      try {
+        const result = await executeTool(tc, handlers.onFileChange, folderPath);
+        results.push(result);
+        handlers.onToolResult?.(result);
+        // Add tool result to conversation
+        conversation.push({
+          role: "tool",
+          toolCallId: tc.id,
+          output: result.output,
+          error: result.error,
+        });
+      } catch (e: any) {
+        const errorResult: ToolResult = {
+          toolCallId: tc.id,
+          output: "",
+          error: e?.message || String(e),
+        };
+        results.push(errorResult);
+        handlers.onToolResult?.(errorResult);
+        conversation.push({
+          role: "tool",
+          toolCallId: tc.id,
+          output: "",
+          error: e?.message || String(e),
+        });
+      }
+    }
+
+    // Loop continues — model will respond to tool results
+  }
+
+  handlers.onDone?.(finalResponse);
+  return finalResponse;
+}
+
+

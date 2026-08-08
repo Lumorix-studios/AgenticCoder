@@ -1,5 +1,6 @@
 use serde::{Deserialize, Serialize};
 use std::path::Path;
+use std::process::Command;
 use tauri::Manager;
 
 // ── File tree types ──────────────────────────────────────────────────────────
@@ -11,6 +12,55 @@ pub struct FileEntry {
     is_dir: bool,
     children: Vec<FileEntry>,
     extension: String,
+}
+
+// ── Shell execution ──────────────────────────────────────────────────────────
+
+#[derive(Serialize, Deserialize, Clone)]
+pub struct ShellRequest {
+    pub command: String,
+    pub args: Vec<String>,
+    pub cwd: Option<String>,
+}
+
+#[derive(Serialize, Deserialize, Clone)]
+pub struct ShellResponse {
+    pub stdout: String,
+    pub stderr: String,
+    pub exit_code: i32,
+    pub success: bool,
+}
+
+#[tauri::command]
+fn execute_shell(req: ShellRequest) -> ShellResponse {
+    let mut cmd = Command::new(&req.command);
+    cmd.args(&req.args);
+    
+    if let Some(cwd) = req.cwd {
+        cmd.current_dir(&cwd);
+    }
+
+    let output = match cmd.output() {
+        Ok(output) => output,
+        Err(e) => {
+            return ShellResponse {
+                stdout: String::new(),
+                stderr: format!("Failed to execute command: {}", e),
+                exit_code: -1,
+                success: false,
+            };
+        }
+    };
+
+    let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+    let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+
+    ShellResponse {
+        stdout,
+        stderr,
+        exit_code: output.status.code().unwrap_or(-1),
+        success: output.status.success(),
+    }
 }
 
 // ── Commands ─────────────────────────────────────────────────────────────────
@@ -207,6 +257,7 @@ pub fn run() {
             read_ai_config,
             write_ai_config,
             ai_config_path,
+            execute_shell,
         ])
         .setup(|app| {
             if cfg!(debug_assertions) {

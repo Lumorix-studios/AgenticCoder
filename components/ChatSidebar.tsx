@@ -1,80 +1,167 @@
-import { useState, useRef, useEffect } from "react";
-import type { ChatMessage, AISettings, Tab, AIEdit, AuthMode } from "../src/types";
-import { PROVIDER_PRESETS, streamChat, testConnection, getAIConfigPath } from "../src/ai";
-import { IoCloseSharp, IoRefresh, IoSettings } from "react-icons/io5";
+import { useEffect, useRef, useState } from "react";
+import type { ReactNode } from "react";
+import type {
+  AIEdit,
+  AISettings,
+  AuthMode,
+  ChatMessage,
+  Tab,
+} from "../src/types";
+import {
+  getAIConfigPath,
+  PROVIDER_PRESETS,
+  streamChat,
+  streamAgentChat,
+  testConnection,
+} from "../src/ai";
+import type { ToolCall, ToolResult } from "../src/types";
+import type { AgentStreamHandlers } from "../src/ai";
+import {
+  IoArrowUp,
+  IoCheckmark,
+  IoChevronDown,
+  IoClose,
+  IoCodeSlash,
+  IoCopyOutline,
+  IoRefresh,
+  IoSettingsOutline,
+  IoSparklesOutline,
+  IoStop,
+  IoExtensionPuzzle,
+} from "react-icons/io5";
 
 interface Props {
   activeFile: Tab | null;
   settings: AISettings;
-  onSettingsChange: (s: AISettings) => void;
+  onSettingsChange: (settings: AISettings) => void;
   onClose: () => void;
   forceSettings?: boolean;
   onForceSettingsHandled?: () => void;
   folderPath: string;
   aiEdits: AIEdit[];
-  onAIEditBlocks: (blocks: { path: string; content: string; complete: boolean }[]) => void;
+  onAIEditBlocks: (
+    blocks: { path: string; content: string; complete: boolean }[],
+  ) => void;
 }
 
-function getLang(name: string): string {
-  const ext = name?.split(".").pop()?.toLowerCase() ?? "";
-  const map: Record<string, string> = {
-    ts: "typescript", tsx: "tsx", js: "javascript", jsx: "jsx",
-    rs: "rust", py: "python", json: "json", md: "markdown",
-    html: "html", css: "css", sh: "bash", toml: "toml",
+function fileName(path = "") {
+  return path.replace(/\\/g, "/").split("/").pop() || path;
+}
+
+function language(name = "") {
+  const extension = name.split(".").pop()?.toLowerCase();
+
+  const languages: Record<string, string> = {
+    ts: "typescript",
+    tsx: "tsx",
+    js: "javascript",
+    jsx: "jsx",
+    py: "python",
+    rs: "rust",
+    json: "json",
+    css: "css",
+    html: "html",
+    md: "markdown",
+    sh: "bash",
   };
-  return map[ext] ?? (ext || "text");
+
+  return languages[extension || ""] || extension || "text";
 }
 
-function MessageBubble({ msg }: { msg: ChatMessage }) {
-  const isUser = msg.role === "user";
-  // Render code blocks
-  const parts = msg.content.split(/(```[\w]*\n[\s\S]*?```)/g);
+function IconButton({
+  label,
+  children,
+  onClick,
+}: {
+  label: string;
+  children: ReactNode;
+  onClick?: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      aria-label={label}
+      title={label}
+      onClick={onClick}
+      className="flex h-7 w-7 items-center justify-center rounded-md text-[#777873] transition hover:bg-white/[0.06] hover:text-[#f1f1eb]"
+    >
+      {children}
+    </button>
+  );
+}
+
+function CodeBlock({
+  languageName,
+  code,
+}: {
+  languageName: string;
+  code: string;
+}) {
+  return (
+    <div className="my-3 overflow-hidden rounded-lg border border-white/[0.08] bg-[#0c0d0c]">
+      <div className="flex h-8 items-center justify-between border-b border-white/[0.07] px-3">
+        <span className="font-mono text-[10px] text-[#777873]">
+          {languageName || "code"}
+        </span>
+
+        <button
+          type="button"
+          aria-label="Copy code"
+          onClick={() => navigator.clipboard?.writeText(code)}
+          className="text-[#666761] transition hover:text-[#d8d8d0]"
+        >
+          <IoCopyOutline size={13} />
+        </button>
+      </div>
+
+      <pre className="overflow-x-auto px-3 py-3 font-mono text-[11px] leading-5 text-[#d7e7dd]">
+        <code>{code}</code>
+      </pre>
+    </div>
+  );
+}
+
+function Message({ message }: { message: ChatMessage }) {
+  const isUser = message.role === "user";
+  const parts = message.content.split(/(```[\w-]*\n[\s\S]*?```)/g);
 
   return (
-    <div className={`flex flex-col gap-0.5 ${isUser ? "items-end" : "items-start"}`}>
-      <span className="text-[10px] font-semibold uppercase tracking-wider text-zinc-600 px-1">
-        {isUser ? "You" : "AI"}
-      </span>
+    <div className={`flex ${isUser ? "justify-end" : "justify-start"}`}>
       <div
-        className={`
-          max-w-full rounded-xl px-3 py-2 text-[12.5px] leading-relaxed
-          ${isUser
-            ? "bg-cyan-500/10 border border-cyan-500/20 text-zinc-200"
-            : "bg-zinc-800/60 border border-zinc-700/40 text-zinc-200"
-          }
-        `}
+        className={`max-w-[88%] text-[13px] leading-6 ${
+          isUser
+            ? "rounded-xl rounded-br-sm bg-[#d9f5e5] px-3.5 py-2.5 text-[#17201a]"
+            : "text-[#d7d8d1]"
+        }`}
       >
-        {parts.map((part: string, i: number) => {
-          const codeMatch = part.match(/^```(\w*)\n([\s\S]*?)```$/);
-          if (codeMatch) {
+        {parts.map((part, index) => {
+          const match = part.match(/^```([\w-]*)\n([\s\S]*?)```$/);
+
+          if (match) {
             return (
-              <pre
-                key={i}
-                className="
-                  bg-zinc-900 border border-zinc-700/60 rounded-lg
-                  p-2 mt-2 mb-1 overflow-x-auto text-[11.5px] leading-[1.55]
-                  text-zinc-200 whitespace-pre
-                "
-                style={{ fontFamily: "var(--font-editor)" }}
-              >
-                <code>{codeMatch[2]}</code>
-              </pre>
+              <CodeBlock
+                key={index}
+                languageName={match[1]}
+                code={match[2]}
+              />
             );
           }
+
           return (
-            <span key={i} className="whitespace-pre-wrap">
-              {part.split(/(`[^`]+`)/g).map((s: string, j: number) => {
-                if (s.startsWith("`") && s.endsWith("`")) {
+            <span key={index} className="whitespace-pre-wrap">
+              {part.split(/(`[^`]+`)/g).map((segment, childIndex) => {
+                if (segment.startsWith("`") && segment.endsWith("`")) {
                   return (
-                    <code key={j}
-                      className="bg-zinc-900 border border-zinc-700/40 rounded px-1 text-[11.5px] text-cyan-300"
-                      style={{ fontFamily: "var(--font-editor)" }}
+                    <code
+                      key={childIndex}
+                      className="rounded bg-white/[0.08] px-1 py-0.5 font-mono text-[11px] text-[#b8e7c9]"
                     >
-                      {s.slice(1, -1)}
+                      {segment.slice(1, -1)}
                     </code>
                   );
                 }
-                return <span key={j}>{s}</span>;
+
+                return <span key={childIndex}>{segment}</span>;
               })}
             </span>
           );
@@ -84,62 +171,171 @@ function MessageBubble({ msg }: { msg: ChatMessage }) {
   );
 }
 
-/** Small card showing a file the AI edited */
-function EditCard({ edit }: { edit: AIEdit }) {
-  const name = edit.path.replace(/\\/g, "/").split("/").pop() ?? edit.path;
-  const statusColor =
-    edit.status === "applied" ? "text-emerald-400" :
-    edit.status === "error" ? "text-red-400" : "text-cyan-400";
-  const statusLabel =
-    edit.status === "applied" ? "✓ applied" :
-    edit.status === "error" ? "✗ error" : "… editing";
+function EditList({ edits }: { edits: AIEdit[] }) {
+  if (!edits.length) return null;
+
   return (
-    <div className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-zinc-800/40 border border-zinc-700/40">
-      <span className={`text-[10.5px] font-semibold ${statusColor} shrink-0`}>{statusLabel}</span>
-      <span className="text-[11.5px] text-zinc-300 font-mono truncate" title={edit.path}>{name}</span>
-      {edit.error && <span className="text-[10px] text-red-400 truncate ml-auto">{edit.error}</span>}
+    <div className="mt-4 space-y-1.5 border-t border-white/[0.07] pt-4">
+      <div className="mb-2 flex items-center gap-2 text-[10px] uppercase tracking-[0.14em] text-[#777873]">
+        <IoCodeSlash size={12} />
+        Changed files
+      </div>
+
+      {edits.map((edit) => {
+        const applied = edit.status === "applied";
+        const failed = edit.status === "error";
+
+        return (
+          <div
+            key={edit.id}
+            className="flex items-center gap-2 rounded-md border border-white/[0.07] px-2.5 py-2"
+          >
+            <span
+              className={`flex h-5 w-5 items-center justify-center rounded-full ${
+                applied
+                  ? "bg-[#bdf1ce]/15 text-[#a8e8bc]"
+                  : failed
+                    ? "bg-red-300/10 text-red-300"
+                    : "bg-[#c9f2d6]/10 text-[#c9f2d6]"
+              }`}
+            >
+              {applied ? (
+                <IoCheckmark size={12} />
+              ) : (
+                <IoCodeSlash size={11} />
+              )}
+            </span>
+
+            <span className="min-w-0 flex-1 truncate font-mono text-[11px] text-[#c6c8c0]">
+              {fileName(edit.path)}
+            </span>
+
+            <span
+              className={`text-[9px] uppercase tracking-wider ${
+                applied
+                  ? "text-[#9cdbad]"
+                  : failed
+                    ? "text-red-300"
+                    : "text-[#a9dcb7]"
+              }`}
+            >
+              {applied ? "applied" : failed ? "error" : "editing"}
+            </span>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function ToolCallBubble({ toolCall }: { toolCall: ToolCall }) {
+  return (
+    <div className="flex items-start gap-2 rounded-lg border border-white/[0.08] bg-[#1a1b1a] px-3 py-2.5 mb-2">
+      <IoExtensionPuzzle size={14} className="text-[#c9f2d6] shrink-0 mt-0.5" />
+      <div className="flex-1">
+        <div className="flex items-center gap-2 text-[11px]">
+          <span className="font-mono text-[#c9f2d6]">{toolCall.name}</span>
+          <span className="text-[#555751]">with args:</span>
+        </div>
+        <pre className="mt-1 max-h-24 overflow-y-auto font-mono text-[10px] text-[#a0a29c]">
+          {toolCall.arguments}
+        </pre>
+      </div>
+    </div>
+  );
+}
+
+function ToolResultBubble({ result }: { result: ToolResult }) {
+  const hasError = !!result.error;
+  return (
+    <div className="flex items-start gap-2 rounded-lg border border-white/[0.08] bg-[#131412] px-3 py-2.5 mb-2">
+      <div className="flex h-4 w-4 items-center justify-center rounded bg-[#bdf1ce]/10 shrink-0 mt-0.5">
+        {hasError ? (
+          <IoClose size={10} className="text-red-400" />
+        ) : (
+          <IoCheckmark size={10} className="text-[#a8e8bc]" />
+        )}
+      </div>
+      <div className="flex-1">
+        <div className="flex items-center gap-1.5 text-[11px]">
+          <span className="font-mono text-[#777873]">
+            {result.toolCallId}
+          </span>
+          {hasError && (
+            <span className="text-red-400">error</span>
+          )}
+        </div>
+        <pre className="mt-1 max-h-32 overflow-y-auto font-mono text-[10px] text-[#a0a29c] whitespace-pre-wrap">
+          {hasError ? result.error : result.output}
+        </pre>
+      </div>
+    </div>
+  );
+}
+
+function Field({
+  label,
+  children,
+}: {
+  label: string;
+  children: ReactNode;
+}) {
+  return (
+    <div>
+      <label className="mb-1.5 block text-[10px] uppercase tracking-[0.14em] text-[#777873]">
+        {label}
+      </label>
+      {children}
     </div>
   );
 }
 
 export default function ChatSidebar({
-  activeFile, settings, onSettingsChange, onClose,
-  forceSettings, onForceSettingsHandled,
-  folderPath, aiEdits, onAIEditBlocks,
+  activeFile,
+  settings,
+  onSettingsChange,
+  onClose,
+  forceSettings,
+  onForceSettingsHandled,
+  folderPath,
+  aiEdits,
+  onAIEditBlocks,
 }: Props) {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState("");
   const [isStreaming, setIsStreaming] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
+  const [draftSettings, setDraftSettings] = useState(settings);
   const [configPath, setConfigPath] = useState("");
-  const [draftSettings, setDraftSettings] = useState<AISettings>(settings);
-  const [testState, setTestState] = useState<"idle" | "testing" | "ok" | "fail">("idle");
-  const [testMsg, setTestMsg] = useState("");
+  const [testState, setTestState] = useState<
+    "idle" | "testing" | "ok" | "fail"
+  >("idle");
+  const [testMessage, setTestMessage] = useState("");
+  const [agentMode, setAgentMode] = useState(false);
+  const [toolCalls, setToolCalls] = useState<ToolCall[]>([]);
+  const [toolResults, setToolResults] = useState<ToolResult[]>([]);
+
   const bottomRef = useRef<HTMLDivElement>(null);
-  const textareaRef = useRef<HTMLTextAreaElement>(null);
   const abortRef = useRef<AbortController | null>(null);
 
-  // Load where the per-app JSON config file lives (for display in settings)
   useEffect(() => {
     getAIConfigPath().then(setConfigPath).catch(() => {});
   }, []);
 
-  // Open settings panel when triggered from the menu
   useEffect(() => {
-    if (forceSettings) {
-      setShowSettings(true);
-      onForceSettingsHandled?.();
-    }
+    if (!forceSettings) return;
+
+    setShowSettings(true);
+    onForceSettingsHandled?.();
   }, [forceSettings, onForceSettingsHandled]);
 
   useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages]);
-
-  // Keep draft in sync when settings change externally
-  useEffect(() => {
     setDraftSettings(settings);
   }, [settings]);
+
+  useEffect(() => {
+    bottomRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [messages, aiEdits, toolCalls, toolResults]);
 
   const saveSettings = () => {
     onSettingsChange(draftSettings);
@@ -150,288 +346,400 @@ export default function ChatSidebar({
     if (!isStreaming) setMessages([]);
   };
 
-  const stopStreaming = () => {
-    abortRef.current?.abort();
-  };
+  const applyPreset = (providerId: string) => {
+    const preset = PROVIDER_PRESETS.find(
+      (provider) => provider.id === providerId,
+    );
 
-  const applyPreset = (presetId: string) => {
-    const preset = PROVIDER_PRESETS.find((p) => p.id === presetId);
     if (!preset) return;
-    setDraftSettings((prev) => ({
-      ...prev,
+
+    setDraftSettings((previous) => ({
+      ...previous,
       provider: preset.id,
       apiUrl: preset.apiUrl,
       anthropic: preset.anthropic,
       authMode: preset.authMode,
-      model: preset.models[0] ?? prev.model,
+      model: preset.models[0] || previous.model,
     }));
   };
 
-  const runTest = async () => {
+  const runConnectionTest = async () => {
     setTestState("testing");
-    setTestMsg("");
+    setTestMessage("");
+
     try {
-      const msg = await testConnection(draftSettings);
+      const result = await testConnection(draftSettings);
       setTestState("ok");
-      setTestMsg(msg);
-    } catch (e) {
+      setTestMessage(result);
+    } catch (error) {
       setTestState("fail");
-      setTestMsg((e as Error).message);
+      setTestMessage((error as Error).message);
     }
   };
 
   const sendMessage = async () => {
     if (!input.trim() || isStreaming) return;
-    if (!settings.apiKey && settings.authMode !== "none") { setShowSettings(true); return; }
 
-    const userText = input.trim();
-    setInput("");
+    if (!settings.apiKey && settings.authMode !== "none") {
+      setShowSettings(true);
+      return;
+    }
 
-    const userMsg: ChatMessage = { id: crypto.randomUUID(), role: "user", content: userText };
-    const newMsgs = [...messages, userMsg];
-    setMessages(newMsgs);
-    setIsStreaming(true);
+    const userMessage: ChatMessage = {
+      id: crypto.randomUUID(),
+      role: "user",
+      content: input.trim(),
+    };
 
     const assistantId = crypto.randomUUID();
-    setMessages((prev) => [...prev, { id: assistantId, role: "assistant", content: "" }]);
+    const nextMessages = [...messages, userMessage];
+
+    setMessages([
+      ...nextMessages,
+      {
+        id: assistantId,
+        role: "assistant",
+        content: "",
+      },
+    ]);
+    setInput("");
+    setIsStreaming(true);
 
     const controller = new AbortController();
     abortRef.current = controller;
 
-    try {
-      const lang = activeFile && "name" in activeFile ? getLang(activeFile.name) : "";
-      const systemContent = activeFile && "content" in activeFile
-        ? `You are an expert coding assistant. The user is editing "${activeFile.name}".\n\nCurrent file (${lang}):\n\`\`\`${lang}\n${activeFile.content.slice(0, 8000)}\n\`\`\`\n\nAnswer concisely. Use markdown and code blocks where appropriate.`
-        : "You are an expert coding assistant. Answer questions clearly and concisely. Use markdown and code blocks.";
+    const activeLanguage =
+      activeFile && "name" in activeFile ? language(activeFile.name) : "";
 
-      await streamChat({
-        settings,
-        messages: newMsgs,
-        folderPath,
-        activeFileName: activeFile?.name,
-        systemPrompt: systemContent,
-        signal: controller.signal,
-        handlers: {
+    const systemPrompt =
+      activeFile && "content" in activeFile
+        ? `You are an expert coding assistant. The user is editing "${activeFile.name}".
+
+Current file:
+\`\`\`${activeLanguage}
+${activeFile.content.slice(0, 8000)}
+\`\`\`
+
+Be concise. Prefer direct edits and actionable code.`
+        : "You are an expert coding assistant. Be concise and practical. Use markdown and code blocks when useful.";
+
+    try {
+      if (agentMode) {
+        // ── Agent mode with tool calling ──
+        const handlers: AgentStreamHandlers = {
           onDelta: (delta) => {
-            setMessages((prev) =>
-              prev.map((m) =>
-                m.id === assistantId ? { ...m, content: m.content + delta } : m
-              )
+            setMessages((previous) =>
+              previous.map((message) =>
+                message.id === assistantId
+                  ? { ...message, content: message.content + delta }
+                  : message,
+              ),
             );
           },
-          onEditBlocks: (blocks) => {
-            // Forward live edit blocks to App so they appear in the editor in real time
-            onAIEditBlocks(blocks.map((b) => ({ path: b.path, content: b.content, complete: b.complete })));
+          onToolCall: (tc) => {
+            setToolCalls((prev) => {
+              const exists = prev.find((t) => t.id === tc.id);
+              if (exists) {
+                return prev.map((t) =>
+                  t.id === tc.id
+                    ? { ...t, arguments: t.arguments + tc.arguments, name: tc.name || t.name }
+                    : t
+                );
+              }
+              return [...prev, tc];
+            });
           },
-          onError: (err) => {
-            setMessages((prev) =>
-              prev.map((m) =>
-                m.id === assistantId
-                  ? { ...m, content: `Error: ${err.message}` }
-                  : m
-              )
+          onToolResult: (result) => {
+            setToolResults((prev) => [...prev, result]);
+          },
+          onFileChange: (path, content) => {
+            // Notify parent that a file was changed by the agent
+            onAIEditBlocks([{ path, content, complete: true }]);
+          },
+          onDone: (full) => {
+            setMessages((previous) =>
+              previous.map((message) =>
+                message.id === assistantId
+                  ? { ...message, content: full }
+                  : message,
+              ),
             );
           },
-        },
-      });
-    } catch (err) {
-      if ((err as Error).name === "AbortError") {
-        setMessages((prev) =>
-          prev.map((m) =>
-            m.id === assistantId
-              ? { ...m, content: m.content + "\n\n_[stopped]_" }
-              : m
-          )
-        );
+          onError: (error) => {
+            setMessages((previous) =>
+              previous.map((message) =>
+                message.id === assistantId
+                  ? { ...message, content: `Error: ${error.message}` }
+                  : message,
+              ),
+            );
+          },
+        };
+
+        await streamAgentChat({
+          settings,
+          messages: nextMessages,
+          folderPath,
+          handlers,
+          signal: controller.signal,
+        });
       } else {
-        setMessages((prev) =>
-          prev.map((m) =>
-            m.id === assistantId
-              ? { ...m, content: `Error: ${(err as Error).message}` }
-              : m
-          )
-        );
+        // ── Regular chat mode ──
+        await streamChat({
+          settings,
+          messages: nextMessages,
+          folderPath,
+          activeFileName: activeFile?.name,
+          systemPrompt,
+          signal: controller.signal,
+          handlers: {
+            onDelta: (delta) => {
+              setMessages((previous) =>
+                previous.map((message) =>
+                  message.id === assistantId
+                    ? { ...message, content: message.content + delta }
+                    : message,
+                ),
+              );
+            },
+            onEditBlocks: (blocks) => {
+              onAIEditBlocks(
+                blocks.map((block) => ({
+                  path: block.path,
+                  content: block.content,
+                  complete: block.complete,
+                })),
+              );
+            },
+            onError: (error) => {
+              setMessages((previous) =>
+                previous.map((message) =>
+                  message.id === assistantId
+                    ? { ...message, content: `Error: ${error.message}` }
+                    : message,
+                ),
+              );
+            },
+          },
+        });
       }
+    } catch (error) {
+      const message = error as Error;
+
+      setMessages((previous) =>
+        previous.map((item) =>
+          item.id === assistantId
+            ? {
+                ...item,
+                content:
+                  message.name === "AbortError"
+                    ? `${item.content}\n\n_generation stopped_`
+                    : `Error: ${message.message}`,
+              }
+            : item,
+        ),
+      );
     } finally {
       setIsStreaming(false);
       abortRef.current = null;
     }
   };
 
-  const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
-    if (e.key === "Enter" && !e.shiftKey) {
-      e.preventDefault();
+  const handleKeyDown = (event: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    if (event.key === "Enter" && !event.shiftKey) {
+      event.preventDefault();
       sendMessage();
     }
   };
 
-  // ── Settings panel ────────────────────────────────────────────────────────
   if (showSettings) {
     return (
-      <div className="w-full h-full flex flex-col bg-zinc-900">
-        <div className="flex items-center justify-between px-4 py-3 border-b border-zinc-800">
-          <span className="text-[13px] font-semibold text-zinc-200">AI Settings</span>
-          <button
-            onClick={() => setShowSettings(false)}
-            className="text-zinc-500 hover:text-zinc-200 text-lg leading-none"
-          ><IoCloseSharp size={20}/></button>
-        </div>
-        <div className="flex-1 overflow-y-auto p-4 flex flex-col gap-4">
-          {/* Provider preset */}
-          <div className="flex flex-col gap-1.5">
-            <label className="text-[11px] font-semibold text-zinc-400 uppercase tracking-wider">Provider</label>
-            <select
-              value={draftSettings.provider}
-              onChange={(e) => applyPreset(e.target.value)}
-              className="bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-2 text-[13px] text-zinc-200 outline-none focus:border-cyan-500"
-            >
-              {PROVIDER_PRESETS.map((p) => (
-                <option key={p.id} value={p.id}>{p.label}</option>
-              ))}
-            </select>
+      <div className="flex h-full w-full flex-col bg-[#10110f] text-[#f1f1eb]">
+        <header className="flex items-center border-b border-white/[0.08] px-4 py-3">
+          <div className="flex-1">
+            <div className="text-[13px] font-semibold">Settings</div>
+            <div className="mt-0.5 text-[10px] text-[#777873]">
+              Configure your model connection
+            </div>
           </div>
 
-          {/* API Key */}
-          <div className="flex flex-col gap-1.5">
-            <label className="text-[11px] font-semibold text-zinc-400 uppercase tracking-wider">
-              API Key {draftSettings.authMode === "none" && <span className="text-zinc-600 normal-case">(not required for this provider)</span>}
-            </label>
+          <IconButton
+            label="Close settings"
+            onClick={() => setShowSettings(false)}
+          >
+            <IoClose size={17} />
+          </IconButton>
+        </header>
+
+        <div className="flex-1 space-y-4 overflow-y-auto px-4 py-4">
+          <Field label="Provider">
+            <div className="relative">
+              <select
+                value={draftSettings.provider}
+                onChange={(event) => applyPreset(event.target.value)}
+                className="w-full appearance-none rounded-lg border border-white/[0.1] bg-white/[0.045] px-3 py-2.5 pr-8 text-[12px] text-[#e3e4dc] outline-none focus:border-[#bdf1ce]/40"
+              >
+                {PROVIDER_PRESETS.map((provider) => (
+                  <option
+                    key={provider.id}
+                    value={provider.id}
+                    className="bg-[#10110f]"
+                  >
+                    {provider.label}
+                  </option>
+                ))}
+              </select>
+
+              <IoChevronDown
+                size={13}
+                className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-[#777873]"
+              />
+            </div>
+          </Field>
+
+          <Field label="API key">
             <input
               type="password"
               value={draftSettings.apiKey}
-              onChange={(e) => setDraftSettings((p: AISettings) => ({ ...p, apiKey: e.target.value }))}
-              placeholder={draftSettings.authMode === "none" ? "optional" : "sk-…"}
-              className="bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-2 text-[13px] text-zinc-200 outline-none focus:border-cyan-500 font-mono"
+              onChange={(event) =>
+                setDraftSettings((previous) => ({
+                  ...previous,
+                  apiKey: event.target.value,
+                }))
+              }
+              placeholder={
+                draftSettings.authMode === "none" ? "Optional" : "sk-..."
+              }
+              className="w-full rounded-lg border border-white/[0.1] bg-white/[0.045] px-3 py-2.5 font-mono text-[12px] text-[#e3e4dc] outline-none placeholder:text-[#555751] focus:border-[#bdf1ce]/40"
             />
-          </div>
+          </Field>
 
-          {/* Base URL */}
-          <div className="flex flex-col gap-1.5">
-            <label className="text-[11px] font-semibold text-zinc-400 uppercase tracking-wider">Base URL</label>
+          <Field label="Base URL">
             <input
               value={draftSettings.apiUrl}
-              onChange={(e) => setDraftSettings((p: AISettings) => ({ ...p, apiUrl: e.target.value }))}
-              className="bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-2 text-[13px] text-zinc-200 outline-none focus:border-cyan-500 font-mono"
+              onChange={(event) =>
+                setDraftSettings((previous) => ({
+                  ...previous,
+                  apiUrl: event.target.value,
+                }))
+              }
+              className="w-full rounded-lg border border-white/[0.1] bg-white/[0.045] px-3 py-2.5 font-mono text-[12px] text-[#e3e4dc] outline-none focus:border-[#bdf1ce]/40"
             />
-            <div className="flex gap-1.5 flex-wrap mt-1">
-              {PROVIDER_PRESETS.map((p) => (
-                <button
-                  key={p.id}
-                  onClick={() => applyPreset(p.id)}
-                  className={`text-[10.5px] px-2 py-0.5 rounded-full border transition-colors ${
-                    draftSettings.provider === p.id
-                      ? "border-cyan-600 text-cyan-400 bg-cyan-500/10"
-                      : "border-zinc-700 text-zinc-400 hover:border-cyan-600 hover:text-cyan-400"
-                  }`}
-                >
-                  {p.label}
-                </button>
-              ))}
-            </div>
-          </div>
+          </Field>
 
-          {/* Model */}
-          <div className="flex flex-col gap-1.5">
-            <label className="text-[11px] font-semibold text-zinc-400 uppercase tracking-wider">Model</label>
+          <Field label="Model">
             <input
               value={draftSettings.model}
-              onChange={(e) => setDraftSettings((p: AISettings) => ({ ...p, model: e.target.value }))}
-              list="model-list"
-              placeholder={PROVIDER_PRESETS.find((p) => p.id === draftSettings.provider)?.modelPlaceholder ?? "model"}
-              className="bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-2 text-[13px] text-zinc-200 outline-none focus:border-cyan-500 font-mono"
+              onChange={(event) =>
+                setDraftSettings((previous) => ({
+                  ...previous,
+                  model: event.target.value,
+                }))
+              }
+              className="w-full rounded-lg border border-white/[0.1] bg-white/[0.045] px-3 py-2.5 font-mono text-[12px] text-[#e3e4dc] outline-none focus:border-[#bdf1ce]/40"
             />
-            <datalist id="model-list">
-              {PROVIDER_PRESETS.find((p) => p.id === draftSettings.provider)?.models.map((m) => (
-                <option key={m} value={m} />
-              ))}
-            </datalist>
-          </div>
+          </Field>
 
-          {/* Auth mode */}
-          <div className="flex flex-col gap-1.5">
-            <label className="text-[11px] font-semibold text-zinc-400 uppercase tracking-wider">Auth Method</label>
-            <div className="flex gap-1.5">
-              {([
-                { id: "bearer", label: "Bearer" },
-                { id: "x-api-key", label: "x-api-key" },
-                { id: "none", label: "None" },
-              ] as { id: AuthMode; label: string }[]).map((m) => (
+          <Field label="Authentication">
+            <div className="grid grid-cols-3 gap-1.5">
+              {(
+                [
+                  ["bearer", "Bearer"],
+                  ["x-api-key", "x-api-key"],
+                  ["none", "None"],
+                ] as [AuthMode, string][]
+              ).map(([id, label]) => (
                 <button
-                  key={m.id}
-                  onClick={() => setDraftSettings((p: AISettings) => ({ ...p, authMode: m.id }))}
-                  className={`text-[11px] px-2.5 py-1 rounded-lg border transition-colors ${
-                    draftSettings.authMode === m.id
-                      ? "border-cyan-600 text-cyan-400 bg-cyan-500/10"
-                      : "border-zinc-700 text-zinc-400 hover:border-cyan-600 hover:text-cyan-400"
+                  key={id}
+                  type="button"
+                  onClick={() =>
+                    setDraftSettings((previous) => ({
+                      ...previous,
+                      authMode: id,
+                    }))
+                  }
+                  className={`rounded-lg border px-2 py-2 text-[10px] transition ${
+                    draftSettings.authMode === id
+                      ? "border-[#bdf1ce]/30 bg-[#bdf1ce]/10 text-[#bdf1ce]"
+                      : "border-white/[0.1] bg-white/[0.03] text-[#777873]"
                   }`}
                 >
-                  {m.label}
+                  {label}
                 </button>
               ))}
             </div>
-          </div>
+          </Field>
 
-          {/* Custom headers */}
-          <div className="flex flex-col gap-1.5">
-            <label className="text-[11px] font-semibold text-zinc-400 uppercase tracking-wider">
-              Custom Headers <span className="text-zinc-600 normal-case">(JSON)</span>
-            </label>
+          <Field label="Custom headers">
             <textarea
               value={draftSettings.customHeaders}
-              onChange={(e) => setDraftSettings((p: AISettings) => ({ ...p, customHeaders: e.target.value }))}
-              placeholder='{ "HTTP-Referer": "https://example.com", "X-Title": "AgenticCoder" }'
-              rows={2}
-              className="bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-2 text-[12px] text-zinc-200 outline-none focus:border-cyan-500 font-mono resize-none"
+              onChange={(event) =>
+                setDraftSettings((previous) => ({
+                  ...previous,
+                  customHeaders: event.target.value,
+                }))
+              }
+              rows={3}
+              placeholder='{ "X-Title": "Redmont" }'
+              className="w-full resize-none rounded-lg border border-white/[0.1] bg-white/[0.045] px-3 py-2.5 font-mono text-[11px] text-[#e3e4dc] outline-none placeholder:text-[#555751] focus:border-[#bdf1ce]/40"
             />
-          </div>
+          </Field>
 
-          {/* Extra body */}
-          <div className="flex flex-col gap-1.5">
-            <label className="text-[11px] font-semibold text-zinc-400 uppercase tracking-wider">
-              Extra Body Fields <span className="text-zinc-600 normal-case">(JSON)</span>
-            </label>
+          <Field label="Extra body fields">
             <textarea
               value={draftSettings.extraBody}
-              onChange={(e) => setDraftSettings((p: AISettings) => ({ ...p, extraBody: e.target.value }))}
+              onChange={(event) =>
+                setDraftSettings((previous) => ({
+                  ...previous,
+                  extraBody: event.target.value,
+                }))
+              }
+              rows={3}
               placeholder='{ "temperature": 0.7 }'
-              rows={2}
-              className="bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-2 text-[12px] text-zinc-200 outline-none focus:border-cyan-500 font-mono resize-none"
+              className="w-full resize-none rounded-lg border border-white/[0.1] bg-white/[0.045] px-3 py-2.5 font-mono text-[11px] text-[#e3e4dc] outline-none placeholder:text-[#555751] focus:border-[#bdf1ce]/40"
             />
-          </div>
-
-          {/* Test connection */}
-          <div className="flex flex-col gap-1.5">
-            <button
-              onClick={runTest}
-              disabled={testState === "testing"}
-              className="bg-zinc-800 hover:bg-zinc-700 disabled:opacity-50 text-zinc-300 font-semibold text-[13px] rounded-lg px-4 py-2 transition-colors border border-zinc-700"
-            >
-              {testState === "testing" ? "Testing…" : "Test Connection"}
-            </button>
-            {testState === "ok" && (
-              <p className="text-[11px] text-emerald-400">{testMsg}</p>
-            )}
-            {testState === "fail" && (
-              <p className="text-[11px] text-red-400 break-words">{testMsg}</p>
-            )}
-          </div>
+          </Field>
 
           <button
-            onClick={saveSettings}
-            className="mt-2 bg-amber-300 hover:bg-cyan-400 text-zinc-950 font-semibold text-[13px] rounded-lg px-4 py-2 transition-colors"
+            type="button"
+            onClick={runConnectionTest}
+            disabled={testState === "testing"}
+            className="flex w-full items-center justify-center gap-2 rounded-lg border border-white/[0.1] bg-white/[0.045] px-3 py-2.5 text-[11px] text-[#c7c8c0] transition hover:bg-white/[0.08] disabled:opacity-50"
           >
-            Save Settings
+            {testState === "testing" ? (
+              <IoRefresh size={13} className="animate-spin" />
+            ) : (
+              <IoCheckmark size={13} />
+            )}
+            {testState === "testing" ? "Testing..." : "Test connection"}
           </button>
 
-          {/* Config file location */}
+          {testMessage && (
+            <p
+              className={`text-[10px] ${
+                testState === "ok" ? "text-[#a8e8bc]" : "text-red-300"
+              }`}
+            >
+              {testMessage}
+            </p>
+          )}
+
+          <button
+            type="button"
+            onClick={saveSettings}
+            className="w-full rounded-lg bg-[#c9f2d6] px-3 py-2.5 text-[11px] font-semibold text-[#142018] transition hover:bg-[#e1f9e8]"
+          >
+            Save settings
+          </button>
+
           {configPath && (
-            <div className="flex flex-col gap-1 mt-2">
-              <label className="text-[11px] font-semibold text-zinc-400 uppercase tracking-wider">
-                Config File <span className="text-zinc-600 normal-case">(stored locally, per app install)</span>
-              </label>
-              <p className="text-[10.5px] text-zinc-500 font-mono break-all bg-zinc-800/40 border border-zinc-800 rounded-lg px-2 py-1.5">
+            <div className="border-t border-white/[0.07] pt-3">
+              <div className="mb-1 text-[9px] uppercase tracking-[0.13em] text-[#777873]">
+                Config path
+              </div>
+              <div className="break-all font-mono text-[10px] leading-4 text-[#555751]">
                 {configPath}
-              </p>
+              </div>
             </div>
           )}
         </div>
@@ -439,116 +747,175 @@ export default function ChatSidebar({
     );
   }
 
-  // ── Chat panel ───────────────────────────────────────────────────────────
   return (
-    <div className="w-full h-full flex flex-col bg-zinc-900">
-      {/* Header */}
-      <div className="flex items-center gap-2 px-3 py-2 border-b border-zinc-800 flex-shrink-0">
-        <span className="text-[13px] font-semibold text-zinc-200 flex-1">AI Chat</span>
-        {activeFile && (
-          <span className="text-[10.5px] text-zinc-600 truncate max-w-[100px]" title={activeFile.name}>
-            {activeFile.name}
-          </span>
-        )}
-        <button
-          onClick={() => setShowSettings(true)}
-          className="text-zinc-600 hover:text-zinc-300 text-[13px] px-1"
-          title="Settings"
-        >< IoSettings size={19}/></button>
-        <button
-          onClick={clearChat}
-          disabled={isStreaming}
-          className="text-zinc-600 hover:text-zinc-300 text-[11px] px-1 disabled:opacity-40"
-          title="Clear chat"
-        ><IoRefresh size={18}/></button>
-        <button
-          onClick={onClose}
-          className="text-zinc-600 hover:text-zinc-200 px-1 text-lg leading-none"
-        ><IoCloseSharp size={20}/></button>
-      </div>
+    <div className="flex h-full w-full flex-col bg-[#10110f] text-[#f1f1eb]">
+      <header className="flex h-12 items-center gap-2 border-b border-white/[0.08] px-3">
+        <div className="flex h-6 w-6 items-center justify-center rounded-md bg-[#c9f2d6] text-[#152219]">
+          <IoSparklesOutline size={13} />
+        </div>
 
-      {/* Messages */}
-      <div className="flex-1 overflow-y-auto p-3 flex flex-col gap-3">
+        <span className="text-[12px] font-semibold tracking-tight">agent</span>
+
+        {/* Agent mode toggle — enables tool calling */}
+        <button
+          type="button"
+          onClick={() => { setAgentMode((v) => !v); setToolCalls([]); setToolResults([]); }}
+          className={`flex items-center gap-1 px-2 py-0.5 text-[10px] rounded-md transition ${
+            agentMode
+              ? "bg-[#c9f2d6]/10 text-[#c9f2d6] border border-[#c9f2d6]/30"
+              : "text-[#777873] hover:text-[#d7d8d1] hover:bg-white/[0.05]"
+          }`}
+          title={agentMode ? "Agent mode: ON (AI can use tools)" : "Agent mode: OFF"}
+        >
+          <IoExtensionPuzzle size={11} />
+          <span>{agentMode ? "Tools ON" : "Tools OFF"}</span>
+        </button>
+
+        {activeFile && (
+          <>
+            <span className="text-[#555751]">/</span>
+            <span className="max-w-[130px] truncate font-mono text-[10px] text-[#777873]">
+              {activeFile.name}
+            </span>
+          </>
+        )}
+
+        <div className="flex-1" />
+
+        <div className="mr-1 flex items-center gap-1.5 text-[9px] uppercase tracking-[0.12em] text-[#799a82]">
+          <span className="h-1.5 w-1.5 rounded-full bg-[#9cdbad]" />
+          ready
+        </div>
+
+        <IconButton label="Settings" onClick={() => setShowSettings(true)}>
+          <IoSettingsOutline size={15} />
+        </IconButton>
+
+        <IconButton label="Clear chat" onClick={clearChat}>
+          <IoRefresh size={15} />
+        </IconButton>
+
+        <IconButton label="Close" onClick={onClose}>
+          <IoClose size={16} />
+        </IconButton>
+      </header>
+
+      <main className="min-h-0 flex-1 overflow-y-auto">
         {messages.length === 0 ? (
-          <div className="flex-1 flex flex-col items-center justify-center text-zinc-700 gap-2 pt-8">
-            <span className="text-2xl">◎</span>
-            <p className="text-[12px] text-center">
-              {activeFile
-                ? `Ask anything about ${activeFile.name}`
-                : "Open a file, then ask questions about it"}
-            </p>
-            <p className="text-[10.5px] text-zinc-800 text-center max-w-[220px]">
-              The AI can create & edit files live — just ask it to change something.
-            </p>
+          <div className="flex h-full flex-col justify-center px-5 py-8">
+            <div className="mb-8">
+              <div className="mb-4 text-[11px] uppercase tracking-[0.18em] text-[#777873]">
+                Coding agent
+              </div>
+
+              <h1 className="max-w-[300px] text-[26px] font-semibold leading-8 tracking-[-0.04em] text-[#f1f1eb]">
+                What should we change?
+              </h1>
+
+              <p className="mt-3 max-w-[310px] text-[12px] leading-5 text-[#777873]">
+                Ask for an explanation, a fix, or a complete feature.
+              </p>
+            </div>
+
+            <div className="space-y-1 border-t border-white/[0.08] pt-2">
+              {[
+                ["Explain this file", "Understand the current code"],
+                ["Find potential bugs", "Review the active file"],
+                ["Add a feature", "Build it directly in the workspace"],
+              ].map(([title, description]) => (
+                <button
+                  key={title}
+                  type="button"
+                  onClick={() => setInput(title)}
+                  className="group flex w-full items-center justify-between border-b border-white/[0.07] py-3 text-left transition hover:px-1"
+                >
+                  <div>
+                    <div className="text-[12px] text-[#d7d8d1] group-hover:text-[#c9f2d6]">
+                      {title}
+                    </div>
+                    <div className="mt-1 text-[10px] text-[#666761]">
+                      {description}
+                    </div>
+                  </div>
+
+                  <IoArrowUp
+                    size={14}
+                    className="-rotate-45 text-[#555751] transition group-hover:text-[#c9f2d6]"
+                  />
+                </button>
+              ))}
+            </div>
           </div>
         ) : (
-          messages.map((msg) => <MessageBubble key={msg.id} msg={msg} />)
-        )}
-
-        {/* AI edit cards */}
-        {aiEdits.length > 0 && (
-          <div className="flex flex-col gap-1.5 mt-1">
-            <span className="text-[10px] font-semibold uppercase tracking-wider text-zinc-600 px-1">
-              File edits
-            </span>
-            {aiEdits.map((edit) => (
-              <EditCard key={edit.id} edit={edit} />
+          <div className="space-y-5 px-4 py-5">
+            {messages.map((message) => (
+              <Message key={message.id} message={message} />
             ))}
+
+            {/* Tool call / result display (agent mode) */}
+            {agentMode && (
+              <div className="space-y-2">
+                {toolCalls.map((tc) => (
+                  <ToolCallBubble key={tc.id} toolCall={tc} />
+                ))}
+                {toolResults.map((result, i) => (
+                  <ToolResultBubble key={i} result={result} />
+                ))}
+              </div>
+            )}
+
+            <EditList edits={aiEdits} />
+
+            <div ref={bottomRef} />
           </div>
         )}
+      </main>
 
-        <div ref={bottomRef} />
-      </div>
-
-      {/* Input */}
-      <div className="border-t border-zinc-800 p-3 flex-shrink-0">
-        <div className="flex gap-2 items-end">
+      <footer className="border-t border-white/[0.08] px-3 py-3">
+        <div className="border-b border-white/[0.14] pb-2 focus-within:border-[#c9f2d6]/60">
           <textarea
-            ref={textareaRef}
             value={input}
-            onChange={(e) => setInput(e.target.value)}
+            onChange={(event) => setInput(event.target.value)}
             onKeyDown={handleKeyDown}
-            placeholder={isStreaming ? "Waiting…" : "Ask about this code…"}
             rows={1}
-            className="
-              flex-1 bg-zinc-800 border border-zinc-700 rounded-lg
-              px-3 py-2 text-[13px] text-zinc-200 placeholder-zinc-600
-              outline-none focus:border-cyan-500 resize-none leading-relaxed
-              max-h-32 overflow-y-auto
-            "
-            style={{ fieldSizing: "content" } as React.CSSProperties}
+            placeholder={
+              isStreaming
+                ? "Working..."
+                : activeFile
+                  ? `Ask about ${fileName(activeFile.name)}`
+                  : "Ask your agent anything"
+            }
+            className="block max-h-32 min-h-[32px] w-full resize-none bg-transparent px-0 py-1 text-[13px] leading-5 text-[#e3e4dc] outline-none placeholder:text-[#555751]"
           />
+        </div>
+
+        <div className="flex items-center justify-between pt-2">
+          <span className="text-[9px] text-[#555751]">
+            Enter to send · Shift+Enter for newline
+          </span>
+
           {isStreaming ? (
             <button
-              onClick={stopStreaming}
-              className="
-                bg-red-500 hover:bg-red-400
-                text-zinc-950 font-bold rounded-lg px-3 py-2 text-[13px]
-                transition-colors flex-shrink-0 h-9
-              "
-              title="Stop generating"
+              type="button"
+              onClick={() => abortRef.current?.abort()}
+              className="flex h-7 items-center gap-1.5 rounded-md bg-red-300/10 px-2.5 text-[10px] text-red-300"
             >
-              ■
+              <IoStop size={12} />
+              Stop
             </button>
           ) : (
             <button
+              type="button"
               onClick={sendMessage}
               disabled={!input.trim()}
-              className="
-                bg-cyan-500 hover:bg-cyan-400 disabled:opacity-40
-                text-zinc-950 font-bold rounded-lg px-3 py-2 text-[13px]
-                transition-colors flex-shrink-0 h-9
-              "
+              className="flex h-7 w-7 items-center justify-center rounded-md bg-[#c9f2d6] text-[#17201a] transition hover:bg-[#e1f9e8] disabled:opacity-25"
+              aria-label="Send message"
             >
-              ↑
+              <IoArrowUp size={14} />
             </button>
           )}
         </div>
-        <p className="text-[10.5px] text-zinc-700 mt-1.5">
-          Enter to send · Shift+Enter for newline
-          {isStreaming && <span className="text-cyan-500"> · streaming…</span>}
-        </p>
-      </div>
+      </footer>
     </div>
   );
 }

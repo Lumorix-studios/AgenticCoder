@@ -16,6 +16,7 @@ interface TopMenuProps {
   onRefreshTree: () => void;
   onOpenAISettings: () => void;
   onOpenInfoPanel: () => void;
+  onOpenPrivacyPolicy: () => void;
 }
 
 interface MenuDef {
@@ -30,6 +31,7 @@ export default function TopMenu({
   onNewFile, onNewFolder, onRefreshTree,
   onOpenAISettings,
   onOpenInfoPanel,
+  onOpenPrivacyPolicy,
 }: TopMenuProps) {
   const [openMenu, setOpenMenu] = useState<string | null>(null);
   const [glassActive, setGlassActive] = useState(false);
@@ -73,6 +75,7 @@ export default function TopMenu({
       items: [
         { label: "Agent config settings", action: onOpenAISettings },
         { label: "Information", action: onOpenInfoPanel },
+        {label : "Privacy policies", action : onOpenPrivacyPolicy},
       ],
     },
     {

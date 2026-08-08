@@ -7,6 +7,7 @@ import Editor from "../components/Editor.tsx";
 import ChatSidebar from "../components/ChatSidebar.tsx";
 import SplitText from "../components/SplitText.tsx";
 import InfoPanel from "../components/InfoPanel";
+import PrivacyPolicy from "../components/PrivacyPolicy.tsx";
 
 import StatusBar from "../components/StatusBar.tsx";
 import type { FileEntry, AISettings, AIEdit, Tab, TabFile } from "./types";
@@ -24,6 +25,7 @@ export default function App() {
   const [folderPath, setFolderPath] = useState("");
   const [chatOpen, setChatOpen] = useState(false);
   const [infoPanelOpen, setInfoPanelOpen] = useState(false);
+  const [PrivacyPolicyOpen, setPrivacyPolicyOpen] = useState(false);
   const [aiSettings, setAISettings] = useState<AISettings>({
     provider: "openai",
     apiUrl: "https://api.openai.com/v1",
@@ -140,11 +142,7 @@ export default function App() {
     }
   }, [folderPath]);
 
-  // ── Real-time AI edits 
-  /**
-   * Apply (or update) a file edit produced by the AI. The change is written
-   * straight into the open tab so the user sees it live, then saved to disk.
-   */
+ 
   const applyAIEdit = useCallback(async (edit: AIEdit) => {
     const folder = folderPathRef.current;
     if (!folder) {
@@ -324,10 +322,12 @@ export default function App() {
           setForceAISettings(true);
         }}
         onOpenInfoPanel={() => setInfoPanelOpen(true)}
+        onOpenPrivacyPolicy={()=>setPrivacyPolicyOpen(true)}
       />
-
+      
       {/* ── Info Panel Overlay ───── */}
       <InfoPanel isOpen={infoPanelOpen} onClose={() => setInfoPanelOpen(false)} />
+     <PrivacyPolicy isOpen={PrivacyPolicyOpen} onClose={()=>setPrivacyPolicyOpen(false)} />
 
       {/* ── Main area ──────── */}
       <div className="flex flex-1 overflow-hidden">
